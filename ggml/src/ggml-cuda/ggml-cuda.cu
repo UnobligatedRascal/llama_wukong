@@ -1455,10 +1455,13 @@ static void ggml_cuda_mul_mat_cublas_impl(ggml_backend_cuda_context & ctx, const
             const auto convert_func = traits::convert(src0->type);
             GGML_ASSERT(convert_func != nullptr);
             convert_func(src0->data, src0_alloc.get(), ggml_nelements(src0), main_stream);
-            const size_t src0_bs = ggml_blck_size(src0->type);
-            s01 *= src0_bs;
-            s02 *= src0_bs;
-            s03 *= src0_bs;
+            // After converting contiguous quantized data to compute_type,
+            // the data is contiguous in compute_type elements. Use dimension-based
+            // strides instead of block_size scaling.
+            s01 = ne00;
+            s02 = ne01*s01;
+            s03 = ne02*s02;
+            is_src0_cont_2 = true;
         } else {
             const auto convert_func = traits::convert_nc(src0->type);
             GGML_ASSERT(convert_func != nullptr);
@@ -1480,10 +1483,13 @@ static void ggml_cuda_mul_mat_cublas_impl(ggml_backend_cuda_context & ctx, const
             const auto convert_func = traits::convert(src1->type);
             GGML_ASSERT(convert_func != nullptr);
             convert_func(src1->data, src1_alloc.get(), ggml_nelements(src1), main_stream);
-            const size_t src1_bs = ggml_blck_size(src1->type);
-            s11 *= src1_bs;
-            s12 *= src1_bs;
-            s13 *= src1_bs;
+            // After converting contiguous quantized data to compute_type,
+            // the data is contiguous in compute_type elements. Use dimension-based
+            // strides instead of block_size scaling.
+            s11 = ne10;
+            s12 = ne11*s11;
+            s13 = ne12*s12;
+            is_src1_cont_2 = true;
         } else {
             const auto convert_func = traits::convert_nc(src1->type);
             GGML_ASSERT(convert_func != nullptr);
