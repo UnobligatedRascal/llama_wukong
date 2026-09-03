@@ -1,126 +1,114 @@
-# llama.cpp
+# llama.cpp for NVIDIA Kepler (sm_35/sm_37)
 
-![llama](https://raw.githubusercontent.com/ggml-org/llama.brand/refs/heads/master/cover/llama-cpp/cover-llama-cpp-dark.svg)
+> This fork enables llama.cpp on NVIDIA Kepler GPUs (Tesla K80, K40, K20) that were dropped when CUDA 12 removed compute capability 3.x support.
 
-<div align="center">
+## What This Fixes
 
-<b>LLM inference in C/C++</b>
+Official llama.cpp fails on Kepler with:
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![Release](https://img.shields.io/github/v/release/ggml-org/llama.cpp?filter=v*&color=brightgreen)](https://github.com/ggml-org/llama.cpp/releases?q=tag:v0)
-[![Nightly](https://img.shields.io/github/v/release/ggml-org/llama.cpp?label=nightly&filter=b*&color=orange)](https://github.com/ggml-org/llama.cpp/releases?q=b)
-[![Server](https://img.shields.io/github/actions/workflow/status/ggml-org/llama.cpp/server.yml?label=Server)](https://github.com/ggml-org/llama.cpp/actions/workflows/server.yml)
-[![Docker](https://img.shields.io/github/actions/workflow/status/ggml-org/llama.cpp/docker.yml?label=Docker)](https://github.com/ggml-org/llama.cpp/actions/workflows/docker.yml)
-[![Winget](https://img.shields.io/github/actions/workflow/status/ggml-org/llama.cpp/winget.yml?label=Winget)](https://github.com/ggml-org/llama.cpp/actions/workflows/winget.yml)
+- `CUBLAS_STATUS_ARCH_MISMATCH` - tensor ops / TF32 math used on hardware without support
+- `CUBLAS_STATUS_INVALID_VALUE` - FP16 pointers passed to FP32 cuBLAS functions
+- `GGML_ASSERT(to_fp32_src0 != nullptr)` - F32 type passed to conversion function
+- Build failures - sm_37 never compiled into binary
 
-[ggml](https://github.com/ggml-org/ggml) / [ops](https://github.com/ggml-org/llama.cpp/blob/master/docs/ops.md) / [maintainer PRs](https://github.com/ggml-org/llama.cpp/issues?q=is%3Apr%20is%3Aopen%20draft%3AFalse%20(author%3Argerganov%20OR%20author%3AKitaitiMakoto%20OR%20author%3Adanbev%20OR%20author%3Aaldehir%20OR%20author%3Amax-krasnyansky%20OR%20author%3ACISC%20OR%20author%3Aggerganov%20OR%20author%3Aam17an%20OR%20author%3Abartowski1182%20OR%20author%3Anikwen%20OR%20author%3Ahipudding%20OR%20author%3AServeurpersoCom%20OR%20author%3Apwilkin%20OR%20author%3Areeselevine%20OR%20author%3Angxson%20OR%20author%3Ajeffbolznv%20OR%20author%3Amarty1885%20OR%20author%3A0cc4m%20OR%20author%3ATitaniumtown%20OR%20author%3Aangt%20OR%20author%3AIMbackK%20OR%20author%3Aarthw%20OR%20author%3AJohannesGaessler%20OR%20author%3AORippler%20OR%20author%3Aruixiang63%20OR%20author%3Axctan%20OR%20author%3Aallozaur%20OR%20author%3Ayomaytk%20OR%20author%3Aaendk%20OR%20author%3Agaugarg-nv%20OR%20author%3Ataronaeo%20OR%20author%3Aforforever73%20OR%20author%3Alhez%20OR%20author%3Anetrunnereve%20OR%20author%3Afairydreaming)%20sort%3Aupdated-desc) / [dev stats](https://github.com/ggml-org/llama.cpp-dev) / [lib llama API](https://github.com/ggml-org/llama.cpp/issues/9289) / [llama-server REST API](https://github.com/ggml-org/llama.cpp/issues/9291)
+All resolved. Multi-GPU tensor parallelism works.
 
-</div>
+## Tested Hardware
 
-## Quick start
+| GPU | Chip | CC | Status |
+|-----|------|----|--------|
+| Tesla K80 | GK210 | sm_37 | Tested, working with -np 4 |
+| Tesla K40 | GK110B | sm_35 | Compiled, not tested |
+| Tesla K20 | GK110 | sm_35 | Compiled, not tested |
 
-A few options to get `llama.cpp` installed on your machine:
+## Requirements
 
-- Visit https://llama.app and follow the instructions
-- Run with Docker - see our [Docker documentation](docs/docker.md)
-- Download pre-built binaries from the [releases page](https://github.com/ggml-org/llama.cpp/releases)
-- Build from source by cloning this repository - check out [our build guide](docs/build.md)
+- CUDA Toolkit 11.x (11.0-11.8) - Kepler support removed in CUDA 12
+- Driver 470.x or later
+- GCC 9 or 10 (GCC 11+ not supported by CUDA 11.x)
+- CMake 3.18+
+- Linux x86_64
 
-Once installed:
+## Build
 
-```sh
-# Download and run a model directly from Hugging Face
-llama cli -hf ggml-org/Qwen3.5-0.8B-GGUF
+```bash
+git clone https://github.com/UnobligatedRascal/llama_lazarus
+cd llama_lazarus
+mkdir build && cd build
 
-# Launch OpenAI-compatible API server
-llama serve -hf ggml-org/Qwen3.5-0.8B-GGUF
+cmake .. \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DGGML_CUDA=ON \
+  -DGGML_CUDA_F16=ON \
+  -DGGML_CUDA_CUBLAS=ON \
+  -DGGML_CUDA_FORCE_MMQ=ON \
+  -DGGML_CUDA_GRAPHS=OFF \
+  -DGGML_CUDA_NCCL=ON \
+  -DCMAKE_CUDA_ARCHITECTURES="37" \
+  -DCMAKE_CUDA_COMPILER=/usr/local/cuda-11.8/bin/nvcc \
+  -DCMAKE_CUDA_HOST_COMPILER=g++-11 \
+  -DCMAKE_C_COMPILER=gcc-11 \
+  -DCMAKE_CXX_COMPILER=g++-11 \
+  -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-rpath,/usr/local/cuda-11.8/targets/x86_64-linux/lib"
+
+make -j$(nproc) llama-server
 ```
 
-<table align="center">
-    <tr>
-        <td align="center" width=50%>
-            <img width="1310" height="888" alt="VLM session with `llama cli`" src="https://github.com/user-attachments/assets/88726b48-1713-48aa-a525-95a02e78afc4" />
-            <i>VLM session with <b>llama cli</b></i>
-        </td>
-        <td align="center">
-            <img width="1392" height="958" alt="Built-in web UI against `llama serve` running Qwen 3.6" src="https://github.com/user-attachments/assets/b402f972-2e32-4def-8771-8d849f08cf2e" />
-            <i>Built-in web UI against <b>llama serve</b></i>
-        </td>
-    </tr>
-<table>
+For Tesla K40/K20 (sm_35), replace `37` with `35` above.
 
-## Description
+## Usage
 
-The main goal of `llama.cpp` is to enable LLM (and VLM) inference with minimal setup and state-of-the-art performance on
-a wide range of hardware - locally and in the cloud.
+Single GPU:
 
-- Plain C/C++ implementation without any dependencies
-- Apple silicon is a first-class citizen - optimized via ARM NEON, Accelerate and Metal frameworks
-- AVX, AVX2, AVX512 and AMX support for x86 architectures
-- RVV, ZVFH, ZFH, ZICBOP and ZIHINTPAUSE support for RISC-V architectures
-- 1.5-bit, 2-bit, 3-bit, 4-bit, 5-bit, 6-bit, and 8-bit integer quantization for faster inference and reduced memory use
-- Custom CUDA kernels for running LLMs on NVIDIA GPUs (support for AMD GPUs via HIP and Moore Threads GPUs via MUSA)
-- Vulkan and SYCL backend support
-- CPU+GPU hybrid inference to partially accelerate models larger than the total VRAM capacity
+```bash
+./bin/llama-server --model model.gguf -ngl 999 -c 4096
+```
 
-The `llama.cpp` project is build on top of the [ggml](https://github.com/ggml-org/ggml) library.
+Dual K80 (2 GPUs on one card):
 
-## Supported backends
+```bash
+./bin/llama-server --model model.gguf -ngl 999 -c 4096 --tensor-split 1,1
+```
 
-| Backend | Target devices |
-| --- | --- |
-| [BLAS](docs/build.md#blas-build) | All |
-| [BLIS](docs/backend/BLIS.md) | All |
-| [CANN](docs/build.md#cann) | Ascend NPU |
-| [CUDA](docs/build.md#cuda) | Nvidia GPU |
-| [HIP](docs/build.md#hip) | AMD GPU |
-| [Hexagon [In Progress]](docs/backend/snapdragon/README.md) | Snapdragon |
-| [IBM zDNN](docs/backend/zDNN.md) | IBM Z & LinuxONE |
-| [MUSA](docs/build.md#musa) | Moore Threads GPU |
-| [Metal](docs/build.md#metal-build) | Apple Silicon |
-| [OpenCL](docs/backend/OPENCL.md) | Adreno GPU |
-| [OpenVINO [In Progress]](docs/backend/OPENVINO.md) | Intel CPUs, GPUs, and NPUs |
-| [RPC](https://github.com/ggml-org/llama.cpp/tree/master/tools/rpc) | All |
-| [SYCL](docs/backend/SYCL.md) | Intel GPU |
-| [VirtGPU](docs/backend/VirtGPU.md) | VirtGPU APIR |
-| [Vulkan](docs/build.md#vulkan) | GPU |
-| [WebGPU](docs/build.md#webgpu) | All |
-| [ZenDNN](docs/build.md#zendnn) | AMD CPU |
+Multi-GPU with parallelism:
 
-## Documentation
+```bash
+./bin/llama-server --model model.gguf -ngl 999 -c 4096 --tensor-split 1,1,1,1 -np 4
+```
 
-#### Tools
+## What Changed (From Upstream)
 
-- [cli](tools/cli/README.md)
-- [completion](tools/completion/README.md)
-- [server](tools/server/README.md)
-- [GBNF grammars](grammars/README.md)
+Three fixes in `ggml/src/ggml-cuda/`:
 
-#### Development
+1. **ggml-cuda.cu** - cuBLAS GEMM algorithm selection: use `CUBLAS_GEMM_DEFAULT` instead of `CUBLAS_GEMM_DEFAULT_TENSOR_OP` on cc < Volta. Batched GEMM paths use `cublasSgemmBatched`/`cublasSgemmStridedBatched` (FP32) instead of Ex variants on cc < Kepler, with proper FP16->FP32 conversion. Strides corrected for contiguous quantized-to-compute_type conversion.
 
-- [How to build](docs/build.md)
-- [Running on Docker](docs/docker.md)
-- [Build on Android](docs/android.md)
-- [Multi-GPU usage](docs/multi-gpu.md)
-- [Performance troubleshooting](docs/development/token_generation_performance_tips.md)
-- [GGML tips & tricks](https://github.com/ggml-org/llama.cpp/wiki/GGML-Tips-&-Tricks)
-- [XCFramework](docs/xcframework.md)
-- [Completions](docs/completions.md)
-- [Models](docs/models.md)
-- [Release process](docs/release.md)
+2. **common.cuh** - cuBLAS handle initialized with `CUBLAS_DEFAULT_MATH` instead of `CUBLAS_TF32_TENSOR_OP_MATH`.
 
-## Contributing
+3. **solve_tri.cu** - Same cuBLAS math mode fix on handle restore.
 
-- Contributors can open PRs
-- Collaborators will be invited based on contributions
-- Maintainers can push to branches in the `llama.cpp` repo and merge PRs into the `master` branch
-- Any help with managing issues, PRs and projects is very appreciated!
-- Read the [CONTRIBUTING.md](CONTRIBUTING.md) for more information
+See `docs/kepler/` for full technical details.
 
-## Acknowledgements
+## Performance Notes
 
-- [yhirose/cpp-httplib](https://github.com/yhirose/cpp-httplib) - Single-header HTTP server, used by `llama-server` - MIT license
-- [nothings/stb](https://github.com/nothings/stb) - Single-header image format decoder, used by multimodal subsystem - Public domain
-- [nlohmann/json](https://github.com/nlohmann/json) - Single-header JSON library, used by various tools/examples - MIT License
-- [mackron/miniaudio](https://github.com/mackron/miniaudio) - Single-header audio format decoder, used by multimodal subsystem - Public domain
-- [sheredom/subprocess.h](https://github.com/sheredom/subprocess.h) - Single-header process launching solution for C and C++ - Public domain
+- Kepler is memory-bandwidth bound (240 GB/s per GK210), not compute-bound
+- Expect 4-6 tok/s on 14B models, 10-20 tok/s on <5B models (Q4_K_M quantization)
+- No Tensor Cores, no BF16, no Flash Attention on this architecture
+- Multi-GPU tensor split helps fit larger models but does not increase generation throughput significantly
+- Independent llama-server processes per GPU may be preferable to aggressive model splitting for some workloads
+
+## Patches Needed for Upstream Builds
+
+When rebasing to a new llama.cpp version, scan for:
+
+- Hardcoded `CUBLAS_GEMM_DEFAULT_TENSOR_OP`
+- `CUBLAS_TF32_TENSOR_OP_MATH`
+- `cublasGemmBatchedEx` / `cublasGemmStridedBatchedEx` without cc guards
+- `ggml_get_to_fp32_cuda()` calls without F32 type handling
+
+See `docs/kepler/SCAN_KEYWORDS.md` for the complete scanner.
+
+## License
+
+MIT License (inherited from upstream llama.cpp)
+
+This is a fork of [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp). Upstream authors retain all rights to their original code.

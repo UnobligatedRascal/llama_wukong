@@ -1407,6 +1407,13 @@ struct batched_mul_mat_traits<GGML_TYPE_F16> {
     static inline auto convert_nc(ggml_type src_type) { return ggml_get_to_fp16_nc_cuda(src_type); }
 };
 
+// Select cuBLAS GEMM algorithm: tensor ops require Volta+ (cc >= 70) and FP16 compute type
+static inline cublasGemmAlgo_t ggml_cuda_cublas_gemm_algo(cublasComputeType_t cu_compute_type, int device_cc) {
+    bool has_tensor_cores = (device_cc >= 70);
+    bool fp16_compute = (cu_compute_type == CUBLAS_COMPUTE_16F || cu_compute_type == CUBLAS_COMPUTE_32F_FAST_16F);
+    return (has_tensor_cores && fp16_compute) ? CUBLAS_GEMM_DEFAULT_TENSOR_OP : CUBLAS_GEMM_DEFAULT;
+}
+
 template<ggml_type compute_type>
 static void ggml_cuda_mul_mat_cublas_impl(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
     using traits = batched_mul_mat_traits<compute_type>;
@@ -1545,10 +1552,12 @@ static void ggml_cuda_mul_mat_cublas_impl(ggml_backend_cuda_context & ctx, const
     const int64_t r2 = ne12/ne02;
     const int64_t r3 = ne13/ne03;
 
-    // Theoretically cublasGemmStridedBatchedEx would always work, even for a single matrix.
-    // However, for some old NVIDIA and AMD GPUs the strided/Ex GEMM is much slower,
-    //     probably because the internal kernel selection logic is suboptimal.
+    // Kepler sm_37: Ex APIs fail internally with CUBLAS_STATUS_ARCH_MISMATCH.
+    // Use legacy Sgemm batched APIs for Kepler (cc < 500).
+    const bool is_kepler = (cc < 500);
+
     if (compute_type == GGML_TYPE_F32 && ne12 == 1 && ne13 == 1) {
+        // Single matrix, F32: Sgemm always works
         CUBLAS_CHECK(
             cublasSgemm(cublas_h, CUBLAS_OP_T, CUBLAS_OP_N,
                     ne01, ne11, ne10,
@@ -1556,32 +1565,81 @@ static void ggml_cuda_mul_mat_cublas_impl(ggml_backend_cuda_context & ctx, const
                                            (const float *) src1_ptr, s11,
                     (const float *) beta,  (float       *)  dst_ptr, ne0));
     } else if (ne12 == 1 && ne13 == 1) {
-        CUBLAS_CHECK(
-            cublasGemmEx(cublas_h, CUBLAS_OP_T, CUBLAS_OP_N,
-                    ne01, ne11, ne10,
-                    alpha, src0_ptr, cu_data_type_a, s01,
-                           src1_ptr, cu_data_type_b, s11,
-                    beta,   dst_ptr, cu_data_type,   ne0,
-                    cu_compute_type,
-                    CUBLAS_GEMM_DEFAULT_TENSOR_OP));
-    } else if (r2 == 1 && r3 == 1 && is_src0_cont_2 && is_src1_cont_2) {
-        // with a [0, 2, 1, 3] perm. and ne02==1 the matrix strides need to be determined from dim 3:
+        // Single matrix, non-F32 compute type -> data converted to F32 for Kepler
+        if (is_kepler) {
+            CUBLAS_CHECK(
+                cublasSgemm(cublas_h, CUBLAS_OP_T, CUBLAS_OP_N,
+                        ne01, ne11, ne10,
+                        (const float *) alpha, (const float *) src0_ptr, s01,
+                                               (const float *) src1_ptr, s11,
+                        (const float *) beta,  (float       *)  dst_ptr, ne0));
+        } else {
+            CUBLAS_CHECK(
+                cublasGemmEx(cublas_h, CUBLAS_OP_T, CUBLAS_OP_N,
+                        ne01, ne11, ne10,
+                        alpha, src0_ptr, cu_data_type_a, s01,
+                               src1_ptr, cu_data_type_b, s11,
+                        beta,   dst_ptr, cu_data_type,   ne0,
+                        cu_compute_type,
+                        ggml_cuda_cublas_gemm_algo(cu_compute_type, cc)));
+        }
+    } else if (is_kepler && r2 == 1 && r3 == 1 && is_src0_cont_2 && is_src1_cont_2) {
+        // Kepler contiguous batched: SgemmStridedBatched
         const int64_t sma = ne02 == 1 ? s03 : s02;
         const int64_t smb = ne12 == 1 ? s13 : s12;
-
-        // there is no broadcast and src0, src1 are contiguous across dims 2, 3
-        // use cublasGemmStridedBatchedEx
         CUBLAS_CHECK(
-        cublasGemmStridedBatchedEx(cublas_h, CUBLAS_OP_T, CUBLAS_OP_N,
-                ne01, ne11, ne10,
-                alpha, src0_ptr, cu_data_type_a, s01, sma,     // strideA
-                       src1_ptr, cu_data_type_b, s11, smb,     // strideB
-                beta,   dst_ptr, cu_data_type,   ne0, ne1*ne0, // strideC
-                ne12*ne13,
-                cu_compute_type,
-                CUBLAS_GEMM_DEFAULT_TENSOR_OP));
+            cublasSgemmStridedBatched(cublas_h, CUBLAS_OP_T, CUBLAS_OP_N,
+                    ne01, ne11, ne10,
+                    (const float *) alpha, (const float *) src0_ptr, s01, sma,
+                                               (const float *) src1_ptr, s11, smb,
+                    (const float *) beta,  (float       *)  dst_ptr, ne0, ne1*ne0,
+                    ne12*ne13));
+    } else if (r2 == 1 && r3 == 1 && is_src0_cont_2 && is_src1_cont_2) {
+        // Non-Kepler contiguous batched: GemmStridedBatchedEx
+        const int64_t sma = ne02 == 1 ? s03 : s02;
+        const int64_t smb = ne12 == 1 ? s13 : s12;
+        CUBLAS_CHECK(
+            cublasGemmStridedBatchedEx(cublas_h, CUBLAS_OP_T, CUBLAS_OP_N,
+                    ne01, ne11, ne10,
+                    alpha, src0_ptr, cu_data_type_a, s01, sma,
+                           src1_ptr, cu_data_type_b, s11, smb,
+                    beta,   dst_ptr, cu_data_type,   ne0, ne1*ne0,
+                    ne12*ne13,
+                    cu_compute_type,
+                    ggml_cuda_cublas_gemm_algo(cu_compute_type, cc)));
+    } else if (is_kepler) {
+        // Kepler general batched with broadcast: SgemmBatched
+        const int64_t ne23 = ne12*ne13;
+
+        ggml_cuda_pool_alloc<const float *> ptrs_src(ctx.pool(), 2*ne23);
+        ggml_cuda_pool_alloc<float *> ptrs_dst(ctx.pool(), 1*ne23);
+
+        const int threads_x = 16;
+        const int threads_y = 16;
+        const dim3 block_dims(threads_x, threads_y);
+        const dim3 grid_dims(
+            (ne13 + threads_x - 1) / threads_x,
+            (ne12 + threads_y - 1) / threads_y
+        );
+        k_compute_batched_ptrs<<<grid_dims, block_dims, 0, main_stream>>>(
+                src0_ptr, src1_ptr, dst_ptr,
+                (const void **)ptrs_src.get(), (void **)ptrs_dst.get(),
+                ne12, ne13, ne23,
+                s02*sizeof(float), s03*sizeof(float),
+                s12*sizeof(float), s13*sizeof(float),
+                nbd2, nbd3, r2, r3);
+
+        CUDA_CHECK(cudaGetLastError());
+
+        CUBLAS_CHECK(
+            cublasSgemmBatched(cublas_h, CUBLAS_OP_T, CUBLAS_OP_N,
+                    ne01, ne11, ne10,
+                    (const float *) alpha, (const float * const *) (ptrs_src.get() + 0*ne23), s01,
+                           (const float * const *) (ptrs_src.get() + 1*ne23), s11,
+                    (const float *) beta,  (float **) (ptrs_dst.get() + 0*ne23), ne0,
+                    ne23));
     } else {
-        // use cublasGemmBatchedEx
+        // Non-Kepler general batched: GemmBatchedEx
         const int64_t ne23 = ne12*ne13;
 
         ggml_cuda_pool_alloc<const void *> ptrs_src(ctx.pool(), 2*ne23);
@@ -1609,15 +1667,16 @@ static void ggml_cuda_mul_mat_cublas_impl(ggml_backend_cuda_context & ctx, const
 
         CUDA_CHECK(cudaGetLastError());
 
+        GGML_LOG_INFO("ggml_cuda_mul_mat_cublas_impl: cu_compute_type=%d cc=%d algo=%d\n", cu_compute_type, cc, ggml_cuda_cublas_gemm_algo(cu_compute_type, cc));
         CUBLAS_CHECK(
-        cublasGemmBatchedEx(cublas_h, CUBLAS_OP_T, CUBLAS_OP_N,
-                ne01, ne11, ne10,
-                alpha, (const void **) (ptrs_src.get() + 0*ne23), cu_data_type_a, s01,
-                       (const void **) (ptrs_src.get() + 1*ne23), cu_data_type_b, s11,
-                beta,  (      void **) (ptrs_dst.get() + 0*ne23), cu_data_type,   ne0,
-                ne23,
-                cu_compute_type,
-                CUBLAS_GEMM_DEFAULT_TENSOR_OP));
+            cublasGemmBatchedEx(cublas_h, CUBLAS_OP_T, CUBLAS_OP_N,
+                    ne01, ne11, ne10,
+                    alpha, (const void **) (ptrs_src.get() + 0*ne23), cu_data_type_a, s01,
+                           (const void **) (ptrs_src.get() + 1*ne23), cu_data_type_b, s11,
+                    beta,  (      void **) (ptrs_dst.get() + 0*ne23), cu_data_type,   ne0,
+                    ne23,
+                    cu_compute_type,
+                    ggml_cuda_cublas_gemm_algo(cu_compute_type, cc)));
     }
 
     // Convert output back to F32 if needed
