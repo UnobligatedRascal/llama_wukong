@@ -6,6 +6,7 @@
 #include "traits.h"
 #include "iqp.h"
 #include "ggml-cpu-impl.h"
+#include "ggml-cpu-numa-replicate.h"
 #include "ggml-impl.h"
 #include "quants.h"
 #include "ggml-threading.h"
@@ -2188,6 +2189,10 @@ static void set_numa_thread_affinity(int thread_n) {
             // run thread on current_node
             node_num = g_state.numa.current_node;
             break;
+        case GGML_NUMA_STRATEGY_MIRROR:
+            // MIRROR: distribute threads and enable weight replication
+            node_num = thread_n % g_state.numa.n_nodes;
+            break;
         case GGML_NUMA_STRATEGY_NUMACTL:
             // use the cpuset that numactl gave us
             rv = pthread_setaffinity_np(pthread_self(), setsize, &g_state.numa.cpuset);
@@ -3927,6 +3932,11 @@ void ggml_cpu_init(void) {
         {
             const char * env = getenv("GGML_CPU_DISABLE_FUSION");
             ggml_cpu_disable_fusion = (env != NULL && atoi(env) == 1);
+        }
+
+        /* Initialize NUMA replication (if supported) */
+        {
+            ggml_numa_replicate_init();
         }
 
         is_first_call = false;
