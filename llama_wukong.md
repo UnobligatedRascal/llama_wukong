@@ -15,6 +15,10 @@ custom kernels, memory tricks)
 Phase 2: Qwen4-exp architecture integration (GDN/QSA, hyper-connection
 tensors, ultra-sparse MoE routing, MTP head)
 
+See ARCHITECTURE_REFERENCE.md for the original architectural pitch with
+full memory topology diagrams, execution pipeline mermaid visualization,
+and Kepler exploitation vectors.
+
 ## Phase 1: NOUGHT Hardware Optimization
 
 ### 1.1 NUMA Replication (highest ROI)
@@ -210,6 +214,7 @@ Kepler limitations accepted:
 ## File Organization
 
 llama_wukong/
+- ARCHITECTURE_REFERENCE.md (original pitch: memory topology, execution pipeline, strategic key points)
 - VERIFIED_CONFIG.md (current working config)
 - llama_wukong.md (this file)
 - PHASE1_TODO.md (detailed implementation tasks)
@@ -221,13 +226,17 @@ llama_wukong/
   - MOE_BATCHING.md
 - scripts/ (build, benchmark, profiling)
   - build_wukong.sh
-  - benchmark_base.sh
-  - profile_memory.sh
+  - bench_numa.sh
+- src/ (custom source files)
+  - ggml-cpu-numa-replicate.c
+  - ggml-cpu-numa-replicate.h
+  - NUMA_INTEGRATION_NOTES.md
 
 ## Version Control
 
-- Base repo: UnobligatedRascal/llama_wukong (private, separate from llama_lazarus)
-- Branch strategy: main (stable), phase1/* (feature branches), research/* (experiments)
+- Repo: UnobligatedRascal/llama_wukong (private fork of llama_lazarus)
+- Base: UnobligatedRascal/llama_lazarus @ commit 93c888df1
+- Branch strategy: master (stable), phase1/* (feature branches), research/* (experiments)
 - Commit often, document all changes with reasoning
 
 ## NUMA Replication Status (Updated 2026-09-04)
@@ -236,8 +245,8 @@ llama_wukong/
 
 Benchmark on NOUGHT dual-socket Xeon (Qwen2.5-0.5B, 36 threads):
 - Single-node binding (numactl --cpunodebind=0, 18 threads): **56.7 gen TPS**
-- Our --numa mirror implementation: **24.6 gen TPS** (BROKEN — 2.3x slower)
-- Root cause: dead code — replication functions defined but never called in compute path
+- Our --numa mirror implementation: **24.6 gen TPS** (BROKEN - 2.3x slower)
+- Root cause: dead code - replication functions defined but never called in compute path
 
 ### Recommendation
 
