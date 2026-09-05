@@ -13,6 +13,7 @@
 
 #include "ggml.h"
 #include "ggml-cpu-impl.h"
+#include "ggml-impl.h"
 
 #if defined(__gnu_linux__)
 #include <numa.h>
@@ -101,48 +102,54 @@ void ggml_numa_replicate_init(void) {
 
     /* Check if libnuma is usable */
     if (numa_available() < 0) {
-        GGML_PRINT_DEBUG("ggml_numa_replicate: libnuma not available\n");
+        fprintf(stderr, "ggml_numa_replicate: libnuma not available\n");
         return;
     }
 
     int max_node = numa_max_node();
     if (max_node < 1) {
-        GGML_PRINT_DEBUG("ggml_numa_replicate: only 1 NUMA node, replication disabled\n");
+        fprintf(stderr, "ggml_numa_replicate: only 1 NUMA node, replication disabled\n");
         return;
     }
 
     if (max_node >= GGML_NUMA_REPLICATE_MAX_NODES) {
-        GGML_PRINT_DEBUG("ggml_numa_replicate: too many nodes (%d), max %d\n",
-                         max_node + 1, GGML_NUMA_REPLICATE_MAX_NODES);
+        fprintf(stderr, "ggml_numa_replicate: too many nodes (%d), max %d\n",
+                max_node + 1, GGML_NUMA_REPLICATE_MAX_NODES);
         return;
     }
 
     g_numa_rep.n_nodes = max_node + 1;
     g_numa_rep.current_node = ggml_numa_rep_get_current_node();
 
-    /* Enumerate CPUs per node */
+    /* Enumerate CPUs per node using numa_node_to_cpus with bitmask */
+    int n_possible_cpus = numa_num_possible_cpus();
     for (int n = 0; n < g_numa_rep.n_nodes; n++) {
         struct ggml_numa_replicate_node *node = &g_numa_rep.nodes[n];
         node->node_id = n;
         node->n_cpus = 0;
 
-        struct bitmask *mask = numa_node_to_mask(n);
-        if (mask == NULL) continue;
+        struct bitmask *cpumask = numa_allocate_cpumask();
+        if (cpumask == NULL) {
+            fprintf(stderr, "ggml_numa_replicate: failed to allocate cpumask for node %d\n", n);
+            continue;
+        }
 
-        for (int cpu = 0; cpu < GGML_NUMA_REPLICATE_MAX_CPUS &&
-                          node->n_cpus < GGML_NUMA_REPLICATE_MAX_CPUS; cpu++) {
-            if (bitmask_isbitset(mask, cpu)) {
-                node->cpus[node->n_cpus++] = cpu;
+        int rc = numa_node_to_cpus(n, cpumask);
+        if (rc == 0) {
+            for (int cpu = 0; cpu < n_possible_cpus && node->n_cpus < GGML_NUMA_REPLICATE_MAX_CPUS; cpu++) {
+                if (numa_bitmask_isbitset(cpumask, cpu)) {
+                    node->cpus[node->n_cpus++] = cpu;
+                }
             }
         }
-        bitmask_free(mask);
+        numa_free_cpumask(cpumask);
 
-        GGML_PRINT_DEBUG("ggml_numa_replicate: node %d has %d CPUs\n", n, node->n_cpus);
+        fprintf(stderr, "ggml_numa_replicate: node %d has %d CPUs\n", n, node->n_cpus);
     }
 
     g_numa_rep.enabled = 1;
-    GGML_PRINT("ggml_numa_replicate: ENABLED across %d nodes, main process on node %d\n",
-               g_numa_rep.n_nodes, g_numa_rep.current_node);
+    fprintf(stderr, "ggml_numa_replicate: ENABLED across %d nodes, main process on node %d\n",
+            g_numa_rep.n_nodes, g_numa_rep.current_node);
 }
 
 /* Get number of NUMA nodes (for replication) */
@@ -190,7 +197,7 @@ void **ggml_numa_replicate_alloc_per_node(size_t size) {
         if (ptrs[n] == NULL) {
             /* Fallback: share with node 0 if allocation fails */
             ptrs[n] = ptrs[0];
-            GGML_PRINT_DEBUG("ggml_numa_replicate: fallback to shared alloc for node %d\n", n);
+            fprintf(stderr, "ggml_numa_replicate: fallback to shared alloc for node %d\n", n);
         }
     }
 
@@ -236,10 +243,10 @@ void *ggml_numa_replicate_get_local_ptr(void **ptrs, int thread_id) {
 /* Print allocation stats */
 void ggml_numa_replicate_stats(void) {
     if (!g_numa_rep.enabled) return;
-    GGML_PRINT("ggml_numa_replicate: %d allocations\n", g_numa_rep.alloc_count);
+    fprintf(stderr, "ggml_numa_replicate: %d allocations\n", g_numa_rep.alloc_count);
     for (int n = 0; n < g_numa_rep.n_nodes; n++) {
-        GGML_PRINT("  node %d: %.2f MB\n", n,
-                   g_numa_rep.alloc_bytes[n] / (1024.0 * 1024.0));
+        fprintf(stderr, "  node %d: %.2f MB\n", n,
+                g_numa_rep.alloc_bytes[n] / (1024.0 * 1024.0));
     }
 }
 
@@ -249,7 +256,7 @@ void ggml_numa_replicate_stats(void) {
 void ggml_numa_replicate_init(void) {}
 int ggml_numa_replicate_get_n_nodes(void) { return 1; }
 int ggml_numa_replicate_is_enabled(void) { return 0; }
-int ggml_numa_replicate_get_thread_node(int thread_id) { return 0; }
+int ggml_numa_replicate_get_thread_node(int thread_id) { (void)thread_id; return 0; }
 void **ggml_numa_replicate_alloc_per_node(size_t size) {
     void **ptrs = (void **)malloc(sizeof(void *));
     if (ptrs) ptrs[0] = malloc(size);
