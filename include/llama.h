@@ -485,6 +485,7 @@ extern "C" {
 
     //optional:
     LLAMA_API void llama_numa_init(enum ggml_numa_strategy numa);
+    LLAMA_API void llama_numa_replicate_init(void);
 
     // Optional: an auto threadpool gets created in ggml if not passed explicitly
     LLAMA_API void llama_attach_threadpool(
