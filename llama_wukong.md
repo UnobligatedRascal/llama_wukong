@@ -229,3 +229,20 @@ llama_wukong/
 - Base repo: UnobligatedRascal/llama_wukong (private, separate from llama_lazarus)
 - Branch strategy: main (stable), phase1/* (feature branches), research/* (experiments)
 - Commit often, document all changes with reasoning
+
+## NUMA Replication Status (Updated 2026-09-04)
+
+### Findings
+
+Benchmark on NOUGHT dual-socket Xeon (Qwen2.5-0.5B, 36 threads):
+- Single-node binding (numactl --cpunodebind=0, 18 threads): **56.7 gen TPS**
+- Our --numa mirror implementation: **24.6 gen TPS** (BROKEN — 2.3x slower)
+- Root cause: dead code — replication functions defined but never called in compute path
+
+### Recommendation
+
+Use `numactl --cpunodebind=0 --membind=0 -t 18` instead of `--numa mirror`. Proven 2.3x speedup, zero code changes.
+
+Full NUMA replication requires kernel-level changes to call per-node pointer mapping. ROI questionable vs single-node binding.
+
+See NUMA_BENCHMARK_RESULTS.md and NUMA_REPLICATION_FIX.md for details.
