@@ -35,6 +35,13 @@ extern "C" {
     };
 
     GGML_BACKEND_API void    ggml_numa_init(enum ggml_numa_strategy numa); // call once for better performance on NUMA systems
+
+    // llama_wukong NUMA weight replication (dual-socket Xeon optimization)
+    GGML_BACKEND_API void     ggml_numa_replicate_init(void);
+    GGML_BACKEND_API int      ggml_numa_replicate_is_enabled(void);
+    GGML_BACKEND_API void     ggml_numa_replicate_weights(void *base, size_t size);
+    GGML_BACKEND_API void *   ggml_numa_replicate_get_local_ptr(void *global_ptr);
+    GGML_BACKEND_API ggml_backend_buffer_t ggml_backend_cpu_numa_buffer_wrap(ggml_backend_buffer_t inner);
     GGML_BACKEND_API bool    ggml_is_numa(void); // true if init detected that system has >1 NUMA node
 
     GGML_BACKEND_API struct ggml_tensor * ggml_new_i32(struct ggml_context * ctx, int32_t value);

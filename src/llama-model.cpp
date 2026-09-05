@@ -25,6 +25,7 @@
 #include "ggml.h"
 #include "ggml-cpp.h"
 
+
 #include <algorithm>
 #include <cassert>
 #include <cfloat>
@@ -1770,6 +1771,17 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
             // indicate that this buffer contains weights
             // this is used by ggml_backend_sched to improve op scheduling: ops that use a weight are preferably scheduled to the backend that contains the weight
             ggml_backend_buffer_set_usage(buf.get(), GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
+        }
+
+        // NUMA replication: replicate weight buffer data to per-node copies
+        for (auto & buf : bufs) {
+            if (ggml_backend_buffer_is_host(buf.get())) {
+                void *base = ggml_backend_buffer_get_base(buf.get());
+                size_t size = ggml_backend_buffer_get_size(buf.get());
+                if (base && size > 0) {
+                    ggml_numa_replicate_weights(base, size);
+                }
+            }
         }
 
         pimpl->ctxs_bufs.emplace_back(std::move(ctx_ptr), std::move(bufs));
