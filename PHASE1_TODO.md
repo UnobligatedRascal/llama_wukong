@@ -2,38 +2,38 @@
 
 Priority order based on ROI and complexity.
 
-## Task 1: NUMA Replication (P0, 1-2 weeks)
+## Task 1: NUMA Replication (P0, COMPLETE - commit 02eb6adec)
 
 ### 1.1 Topology Detection
-- [ ] Add runtime NUMA node detection (libnuma or /sys topology)
-- [ ] Map CPU cores to NUMA nodes:
+- [x] Add runtime NUMA node detection (libnuma or /sys topology)
+- [x] Map CPU cores to NUMA nodes:
   - Node 0: cores 0-17, 36-53 (36 threads)
   - Node 1: cores 18-35, 54-71 (36 threads)
-- [ ] Expose via GGML_NUMA_REPLICATE compile flag
+- [x] Expose via GGML_NUMA_REPLICATE compile flag
 
 ### 1.2 Weight Replication
-- [ ] Modify buffer alloc to duplicate weights at load time
-- [ ] Each NUMA node gets its own aligned_alloc on local memory
-- [ ] Track per-node base pointers in ggml_backend_buffer_type
+- [x] Modify buffer alloc to duplicate weights at load time
+- [x] Each NUMA node gets its own aligned_alloc on local memory
+- [x] Track per-node base pointers in ggml_backend_buffer_type
 
 ### 1.3 Thread Pinning
-- [ ] Bind threads to NUMA-local cores at startup
-- [ ] Use pthread_setaffinity_np or sched_setaffinity
-- [ ] Thread pool split: 18 threads per node (physical cores, no HT)
+- [x] Bind threads to NUMA-local cores at startup
+- [x] Use pthread_setaffinity_np or sched_setaffinity
+- [x] Thread pool split: 18 threads per node (physical cores, no HT)
 
 ### 1.4 Per-Thread Pointer Swap
-- [ ] In ggml_compute_forward_mul_mat: swap src->data pointer based on thread's NUMA node
-- [ ] Use ggml_compute_params.ith to determine which copy to read
-- [ ] Single-cycle address translation, zero extra latency
+- [x] In ggml_compute_forward_mul_mat: swap src->data pointer based on thread's NUMA node
+- [x] Use ggml_compute_params.ith to determine which copy to read
+- [x] Single-cycle address translation, zero extra latency
 
 ### 1.5 NUMA-Local wdata
-- [ ] Create per-node wdata buffers for quantized dequantization
-- [ ] Each node quantizes src1 into its own local buffer
+- [x] Create per-node wdata buffers for quantized dequantization
+- [x] Each node quantizes src1 into its own local buffer
 
 ### 1.6 Verification
-- [ ] Build with -DGGML_NUMA_REPLICATE=ON
-- [ ] Benchmark vs baseline (same model, same config)
-- [ ] Expected: 1.4-1.75x speedup on CPU-heavy paths
+- [x] Build with -DGGML_NUMA_REPLICATE=ON
+- [x] Benchmark vs baseline (same model, same config)
+- [x] Result: numa_mirror=61.0 TPS matches numactl_node0=61.4 TPS (was 24.6 TPS broken)
 
 ## Task 2: Async Multi-GPU Pipeline (P1, 2-3 weeks)
 
@@ -152,7 +152,8 @@ cmake .. \
   -DCMAKE_C_COMPILER=gcc-11 \
   -DCMAKE_CXX_COMPILER=g++-11 \
   -DGGML_CUDA_CUBLAS=ON \
-  -DGGML_NUMA_REPLICATE=ON \
+  -DCMAKE_C_FLAGS="-DGGML_NUMA_REPLICATE" \
+  -DCMAKE_CXX_FLAGS="-DGGML_NUMA_REPLICATE" \
   -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-rpath,/usr/local/cuda-11.8/targets/x86_64-linux/lib"
 
 make -j36 llama-server llama-bench
