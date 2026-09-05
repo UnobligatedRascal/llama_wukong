@@ -190,6 +190,17 @@ int ggml_numa_replicate_is_enabled(void) {
     return g_numa_rep.enabled;
 }
 
+/* Detect which NUMA node a page belongs to via get_mempolicy(MPOL_F_NODE) */
+static int ggml_numa_rep_get_node_of_page(void *addr) {
+    int node = -1;
+    unsigned long maxnode = numa_max_node() + 1;
+    if (get_mempolicy(&node, NULL, 0, addr, MPOL_F_NODE | MPOL_F_ADDR) == 0 &&
+        node >= 0 && node < g_numa_rep.n_nodes) {
+        return node;
+    }
+    return 0; /* fallback to node 0 */
+}
+
 /*
  * Replicate a buffer's data to per-node copies.
  * Called after tensor allocation completes.
@@ -200,16 +211,22 @@ void ggml_numa_replicate_weights(void *base, size_t size) {
 
     g_numa_rep.original_base = base;
     g_numa_rep.original_size = size;
-    g_numa_rep.node_bases[0] = base; /* node 0 uses original */
 
-    for (int n = 1; n < g_numa_rep.n_nodes; n++) {
+    /* Detect which node the original buffer lives on */
+    int orig_node = ggml_numa_rep_get_node_of_page(base);
+    g_numa_rep.node_bases[orig_node] = base;
+    fprintf(stderr, "ggml_numa_replicate: original buffer on node %d\n", orig_node);
+
+    /* Replicate to all OTHER nodes */
+    for (int n = 0; n < g_numa_rep.n_nodes; n++) {
+        if (n == orig_node) continue;
         g_numa_rep.node_bases[n] = ggml_numa_rep_alloc_onnode(size, n);
         if (g_numa_rep.node_bases[n]) {
             memcpy(g_numa_rep.node_bases[n], base, size);
             fprintf(stderr, "ggml_numa_replicate: replicated %.2f MB to node %d\n",
                     size / (1024.0 * 1024.0), n);
         } else {
-            fprintf(stderr, "ggml_numa_replicate: FAILED to allocate on node %d, falling back to shared\n", n);
+            fprintf(stderr, "ggml_numa_replicate: FAILED to allocate on node %d, falling back to original\n", n);
             g_numa_rep.node_bases[n] = base;
         }
     }

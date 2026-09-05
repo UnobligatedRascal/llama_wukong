@@ -24,6 +24,8 @@ cmake .. \
   -DCMAKE_C_COMPILER=gcc-11 \
   -DCMAKE_CXX_COMPILER=g++-11 \
   -DGGML_CUDA_CUBLAS=ON \
+  -DCMAKE_C_FLAGS="-DGGML_NUMA_REPLICATE" \
+  -DCMAKE_CXX_FLAGS="-DGGML_NUMA_REPLICATE" \
   -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-rpath,/usr/local/cuda-11.8/targets/x86_64-linux/lib"
 
 echo "Building (36 cores)..."
