@@ -1,5 +1,11 @@
 # NUMA Replication Research
 
+## STATUS: P0 COMPLETE (9/4/2026)
+- NOUGHT HEAD c2ae57179: NUMA replicate layer built, tested, verified
+- `--numa mirror` flag works end-to-end with llama-server
+- Verified on dual-socket Xeon: 2 NUMA nodes × 36 CPUs each
+- Local backup: commit 90acf3b
+
 ## Problem
 
 NOUGHT has dual-socket Xeon E5-2697 v4 with separate DDR4 controllers:
@@ -24,6 +30,34 @@ that's ~164GB — exceeds our 128GB. Trade-off: replicate only hot paths
 (attention weights, norms) or use partial replication.
 
 ## Implementation Points
+
+### P0 Completed: Replicate Layer + --numa mirror
+
+Files (NOUGHT HEAD c2ae57179):
+- `ggml/src/ggml-cpu/ggml-cpu-numa-replicate.c/.h` — libnuma-based per-node alloc
+- `ggml/src/ggml-cpu/ggml-cpu.c` — MIRROR strategy in ggml_numa_thread_set_affinity(), ggml_numa_replicate_init() call
+- `ggml/include/ggml-cpu.h` — GGML_NUMA_STRATEGY_MIRROR = 4
+- `common/arg.cpp` — `--numa mirror` option
+- `ggml/src/ggml-cpu/CMakeLists.txt` — +numa lib link
+
+Design:
+- ggml_numa_replicate_init() enumerates nodes via numa_max_node(), numa_node_to_cpus() bitmask API
+- Per-node alloc: numa_alloc_onnode() + memcpy to replicate data
+- Thread-node mapping via SYS_getcpu → cpu_to_node lookup
+- Stubbed for non-Linux platforms
+
+Verified output:
+```
+ggml_numa_replicate: node 0 has 36 CPUs
+ggml_numa_replicate: node 1 has 36 CPUs
+ggml_numa_replicate: ENABLED across 2 nodes, main process on node 0
+```
+
+Test: Qwen2.5-0.5B @ `--numa mirror -t 36` → 124 tok/s prompt, 28.6 tok/s gen (tiny model)
+
+Caveat: numa_balancing=1 on NOUGHT degrades NUMA performance → should disable
+
+### P1 (Future): Full Integration
 
 ### Buffer Type Extension
 llama.cpp backend alloc interface (ggml_backend_buffer_type_i):
