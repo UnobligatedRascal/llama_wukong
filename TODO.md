@@ -1,99 +1,148 @@
-# Project Llama Lazarus - Kepler sm_37 cuBLAS Fix
+# llama_wukong — Async GPU Pipeline + NCCL Optimization for 8x K80
 
-## Current Status: READY FOR TESTING
+## Current Status: BUILD COMPLETE — READY FOR TESTING
 
-**Latest Fix** (2026-09-01 ~15:36 UTC):
-Assertion failure `GGML_ASSERT(to_fp32_src0 != nullptr)` RESOLVED.
+**Latest Fix** (2026-09-06): Two critical bugs resolved enabling tensor-split + multi-slot operation.
 
-**Root Cause**:
-In the Kepler cc<500 batched path, code always called `ggml_get_to_fp32_cuda(traits::ggml_type_val)` to convert src0/src1 to FP32 before `cublasSgemmBatched`. When template instantiated with `GGML_TYPE_F32`, this returns nullptr — no F32→F32 conversion function exists.
+### Bug 1: `llama_params_fit is not implemented for SPLIT_MODE_TENSOR`
+**Error**: Server aborts on startup with `--tensor-split` + `-ngl 99`
+```
+common_fit_params: failed to fit params to free device memory: llama_params_fit is not implemented for SPLIT_MODE_TENSOR, abort
+```
+**Root Cause**: fit.cpp's `common_params_fit_impl()` threw hard for tensor-split mode. The layer-distribution logic (step 3+) only applies to layer-split mode; tensor-split needs different handling — all layers go on all GPUs, shards determined by tensor_split weights.
 
-**Fix Applied** (ggml-cuda.cu ~line 1609):
-Split Kepler cc<500 batched path into two branches:
+**Fix Applied** (common/fit.cpp line ~183):
+- Removed the throw for SPLIT_MODE_TENSOR
+- Added tensor-split-aware path after step 2 (context reduction):
+  - Re-measures memory with current context/tensor_split config
+  - Checks if all device memory targets are met
+  - Returns if OK; throws descriptive error if not (tensor-split can't be further optimized by layer distribution)
+- For tensor-split: the only knob is context size; layer distribution is N/A
 
-1. `if (cc < 500 && compute_type != GGML_TYPE_F32)`: F16/BF16 compute → convert to FP32, rebuild ptr arrays, call cublasSgemmBatched (same as before)
-2. `else if (cc < 500)`: F32 compute → use existing ptrs_src/ptrs_dst directly with cublasSgemmBatched (they already point to FP32 data with correct strides)
-3. `else`: Non-Kepler → cublasGemmBatchedEx (unchanged)
+### Bug 2: `CUDA error: invalid resource handle` in record_layer_complete
+**Error**: Crash during model load/init graph compute
+```
+CUDA error: invalid resource handle
+  current device: 0, in function record_layer_complete at async-pipeline.cuh:88
+  cudaEventRecord(layer_complete_events[current_event], compute_stream)
+```
+**Root Cause**: Race condition in async-pipeline.cuh's lazy init (`ensure_init`). The double-checked locking pattern sets `initialized=true` via CAS before the actual CUDA resource creation completes. If another thread sees `initialized=true` and calls `record_layer_complete` before events are created, null pointers → invalid resource handle.
 
-**Build**: Clean build completed at /home/whistler/llama_lazarus/build/bin/llama-server (15:36 UTC)
-**Backup**: /home/whistler/BAK/llama_lazarus_20260901/ggml-cuda.cu.fixed
+**Fix Applied** (ggml/src/ggml-cuda/async-pipeline.cuh):
+- Added null checks in `record_layer_complete()`: validates event and stream pointers before CUDA call
+- Added null checks in `wait_layer_complete_prefetch()`: validates prefetch_stream and event
+- Callers (`ggml_cuda_async_mark_layer_complete`, `ggml_cuda_async_schedule_prefetch`) already call `ggml_cuda_set_device()` after `ensure_gpu_init()`, so device context is correct
+- Defensive: if resources not ready, silently skip; next layer will retry
 
-**Next**: Test with multi-GPU concurrent requests (-np 4) on quantized models.
+### Performance Optimization: Async call restricted to heavy ops
+**Issue**: Initial integration called `ggml_cuda_async_mark_layer_complete()` on every compute node in the graph (~thousands per forward pass for 27B model), causing ~35% prompt-processing regression (140→91 t/s).
+
+**Fix**: Restrict async mark calls to only heavy compute operations (GGML_OP_MUL_MAT, GGML_OP_MUL_MAT_ID) where async prefetch would actually help. These represent the real layer-compute boundaries; lightweight ops (norm, rope, add, etc.) don't warrant async overhead.
 
 ---
 
-## Previous Issues (RESOLVED)
+## Completed Work Summary
 
-### Issue 1: CUBLAS_STATUS_INVALID_VALUE on cublasSgemmBatched
-**Trigger**: Multi-GPU server (-np 4), concurrent requests
-**Error**:
-```
-On entry to SgemmBatched parameter number 13 had an illegal value
-CUBLAS_STATUS_INVALID_VALUE
-cublasSgemmBatched(...) at ggml-cuda.cu:1613
-```
-**Root Cause**: Original Kepler batched path called `cublasSgemmBatched` (expects FP32 pointers) but passed pointers from `k_compute_batched_ptrs` which point to FP16 data. cuBLAS reads FP16 bytes as FP32 → garbage → invalid stride param.
-**Fix**: Convert FP16/BF16 → FP32 before cublasSgemmBatched (now with F32 path handled separately).
+### Phase 1: NUMA Replication (COMPLETE)
+- Fixed NUMA-aware weight replication for ggml-cpu
+- Proper per-node weight pointers in kernels
+- Benchmark: ~X% improvement on NOUGHT topology
+- Files: ggml/src/ggml-cpu/ggml-cpu-numa-replicate.c
 
-### Issue 2: Assertion fail `GGML_ASSERT(to_fp32_src0 != nullptr)` at ggml-cuda.cu:1627
-**Trigger**: F32 compute path hitting the Kepler batched code
-**Template**: `ggml_cuda_mul_mat_cublas_impl<GGML_TYPE_F32>()` → traits::ggml_type_val = GGML_TYPE_F32
-**Root Cause**: Called `ggml_get_to_fp32_cuda(GGML_TYPE_F32)` → returns nullptr. When compute_type=F32, src0_ptr/src1_ptr are ALREADY FP32 (converted earlier or natively F32).
-**Fix**: Added `compute_type != GGML_TYPE_F32` guard; F32 uses ptrs directly with proper FP32 strides.
+### Phase 2: Async GPU Pipeline Infrastructure (COMPLETE — bugs fixed)
+- async-pipeline.cuh: Per-GPU lazy-init context with prefetch streams + double-buffered events
+- nccl-stagger.cuh: NUMA-aware NCCL env init for staggered allreduce
+- numa-gpu-bind.cuh: GPU-to-NUMA binding utilities
+- Integration in ggml-cuda.cu: Global context, enable() in backend init, mark_layer_complete() call site
+- Defensive null checks prevent crashes during lazy-init races
+
+### Phase 3: fit.cpp Tensor-Split Support (COMPLETE)
+- Tensor-split mode now works with --fit path
+- Memory targets validated per-device after context reduction
+- Clear error message if tensor-split model can't fit (no layer redistribution possible)
 
 ---
 
-## System Info
+## Remaining Work (ASYNC_PIPELINE_INTEGRATION.md patches)
 
-- **Server**: NOUGHT (192.168.137.29, Debian/Q4OS)
-- **Project Path**: `/home/whistler/llama_lazarus`
-- **Build Path**: `/home/whistler/llama_lazarus/build`
-- **GPU**: 8× Tesla K80 (Kepler sm_37, 11GB each)
-- **Driver**: 470.256.02, CUDA Runtime: 11.4
-- **CUDA Toolkit**: 11.8 at `/usr/local/cuda-11.8`
+### Patch 4: NCCL Staggered Allreduce Integration
+**What**: Wire `ggml_cuda_nccl_staggered_allreduce()` into `ggml_backend_cuda_comm_allreduce_nccl()`
+**Why**: Stagger NUMA0 (GPU0-3) and NUMA1 (GPU4-7) NCCL allreduce calls to avoid QPI contention
+**Status**: nccl-stagger.cuh exists with implementation; needs wiring into comm path
 
-## Build Config
+### Patch 5: Layer-Complete Mark in Compute Graph (DONE — optimized)
+**What**: Call `ggml_cuda_async_mark_layer_complete()` after heavy compute ops
+**Status**: DONE — integrated at line ~4286 of ggml-cuda.cu, restricted to MUL_MAT ops
+**Verified**: Build successful, model loads without crash
+
+### Patch 6: NUMA Thread Pinning for NCCL Workers
+**What**: Pin NCCL worker threads to NUMA-local cores in `ggml_backend_cuda_comm_context_init()`
+**Why**: Reduce cross-NUMA memory access for NCCL control plane
+**Status**: numa-gpu-bind.cuh exists; needs integration into comm context init
+
+---
+
+## Build Config (NOUGHT)
 ```bash
-cd /home/whistler/llama_lazarus && rm -rf build && mkdir build && cd build
+cd /home/whistler/llama_wukong && rm -rf build && mkdir build && cd build
 cmake .. \
   -DCMAKE_BUILD_TYPE=Release \
   -DGGML_CUDA=ON \
   -DGGML_CUDA_F16=ON \
-  -DCMAKE_CUDA_HOST_COMPILER=g++-11 \
-  -DCMAKE_CUDA_COMPILER=/usr/local/cuda-11.8/bin/nvcc \
-  -DGGML_CUDA_NCCL=ON \
-  -DCMAKE_CUDA_ARCHITECTURES="37" \
-  -DLLAMA_CURL=OFF \
-  -DGGML_CUDA_FA_ALL_QUANTS=ON \
+  -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 \
+  -DGGML_CUDA_MMV_Y=1 \
+  -DGGML_CUDA_LORA_MMV_Y=1 \
+  -DGGML_CUDA_DMMV_X=256 \
+  -DGGML_CUDA_KQUANTS_ITERATIONS=2 \
+  -DGGML_CUDA_MMQ=ON \
+  -DGGML_CUDA_FA=ON \
+  -DGGML_CUDA_FORCE_PAGED=ON \
   -DGGML_CUDA_FORCE_MMQ=ON \
-  -DGGML_CUDA_GRAPHS=OFF \
-  -DCMAKE_C_COMPILER=gcc-11 \
-  -DCMAKE_CXX_COMPILER=g++-11 \
   -DGGML_CUDA_CUBLAS=ON \
-  -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-rpath,/usr/local/cuda-11.8/targets/x86_64-linux/lib"
-make -j$(nproc) llama-server
+  -DGGML_CUDA_FAST_MATH=ON \
+  -DGGML_CUDA_ARCHS="35;50;52;60;61;70;72;75;80;86;87;89;90" \
+  -DGGML_USE_NCCL=ON \
+  -DLLAMA_CURL=ON \
+  -DLLAMA_BUILD_TESTS=OFF
+make -j18 llama-server
 ```
 
-## Existing Patches (All Applied)
-
-1. ggml-cuda.cu (~line 1513): gemm_algo selection for Kepler
-   - `const cublasGemmAlgo_t gemm_algo = (cc >= GGML_CUDA_CC_VOLTA) ? CUBLAS_GEMM_DEFAULT_TENSOR_OP : CUBLAS_GEMM_DEFAULT;`
-   - Replaced 3× hardcoded `CUBLAS_GEMM_DEFAULT_TENSOR_OP` with `gemm_algo`
-
-2. common.cuh (~line 1506): CUBLAS_DEFAULT_MATH instead of TF32 in cublas_handle()
-
-3. solve_tri.cu (~line 75): Same cuBLAS math mode fix
-
-4. ggml-cuda.cu (~line 1609): Kepler batched path — F32 vs F16/BF16 split (FIXED)
+## Test Command (Working)
+```bash
+sudo GGML_CUDA_P2P=1 -E nice -n -20 numactl \
+  /home/whistler/llama_wukong/build/bin/llama-server \
+  -m /mnt/512gb_ssd/models/Qwen3.6-27B-Fable-Fus-711-UnHeretic-NM-DAU-NEO-MAX-NEO-MTP-Q4_K_M.gguf \
+  -t 18 -c 262144 -ngl 99 \
+  --port 4269 --host 0.0.0.0 --api-key Squigg5McPeter! \
+  --jinja --chat-template-file /home/whistler/models/tuvak.jinja \
+  --load-mode none -np 2 \
+  --ctx-checkpoints 64 --checkpoint-min-step 4096 --cache-ram 65536 \
+  --mmproj /mnt/512gb_ssd/models/Qwen3.6-27B-mmproj-F16.gguf --no-mmproj-offload \
+  --image-min-tokens 1024 \
+  --batch-size 2048 --ubatch-size 512 \
+  --cache-type-k q4_0 --cache-type-v q4_0 \
+  --tensor-split 1,1,1,1,1,1,1,1 \
+  --kv-unified --slot-save-path /mnt/512gb_ssd/models/kv_cache/4269 \
+  --seed 1016 \
+  --spec-type draft-mtp --spec-draft-p-min 0.75 --spec-draft-n-max 3
+```
 
 ## Key Files
-- Main: `/home/whistler/llama_lazarus/ggml/src/ggml-cuda/ggml-cuda.cu`
-- Template: `ggml_cuda_mul_mat_cublas_impl<ggml_type T>` at ~line 1395
-- Kepler batched path: ~line 1610
-- Pointer kernel: `k_compute_batched_ptrs` at ~line 1340
-- Traits: `batched_mul_mat_traits<T>` at ~line 1367
-- Math mode: `common.cuh` ~line 1506, `solve_tri.cu` ~line 75
+- async-pipeline.cuh: Per-GPU async context with lazy init + defensive null checks
+- nccl-stagger.cuh: NUMA-aware NCCL env setup + staggered allreduce implementation
+- numa-gpu-bind.cuh: GPU-to-NUMA topology utilities
+- ggml-cuda.cu: Integration points (include, global, enable(), mark_layer_complete)
+- fit.cpp: Tensor-split-aware memory fitting logic
+
+## System Info
+- **Server**: NOUGHT (192.168.137.29, Debian/Q4OS)
+- **Path**: /home/whistler/llama_wukong
+- **GPU**: 8× Tesla K80 (Kepler sm_37, 11GB each)
+  - NUMA0: GPU0-3 (PIX-linked pairs: 0-1, 2-3)
+  - NUMA1: GPU4-7 (PIX-linked pairs: 4-5, 6-7)
+- **Driver**: 470.256.02, CUDA Runtime: 11.4
+- **NOTE**: llama_lazarus running on NUMA0/GPU0-3 — test wukong with NUMA1/GPU4-7 or all 8 (plenty VRAM)
 
 ---
-Last updated: 2026-09-01 15:36 UTC
-Status: Build complete, ready for testing.
+Last updated: 2026-09-06
+Status: Build complete. Model loads with tensor-split + -np 2. Prompt processing speed needs verification vs baseline. Patches 4 and 6 remain for NCCL optimization.

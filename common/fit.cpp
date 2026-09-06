@@ -179,9 +179,6 @@ static void common_params_fit_impl(
         const char * path_model, struct llama_model_params * mparams, struct llama_context_params * cparams,
         float * tensor_split, struct llama_model_tensor_buft_override * tensor_buft_overrides,
         size_t * margins_s, uint32_t n_ctx_min, const common_fit_extra_model * extra, enum ggml_log_level log_level) {
-    if (mparams->split_mode == LLAMA_SPLIT_MODE_TENSOR) {
-        throw common_params_fit_exception("llama_params_fit is not implemented for SPLIT_MODE_TENSOR, abort");
-    }
     constexpr int64_t MiB = 1024*1024;
     typedef std::vector<llama_device_memory_data> dmds_t;
     const llama_model_params default_mparams = llama_model_default_params();
@@ -457,6 +454,42 @@ static void common_params_fit_impl(
     }
     if (nd == 0) {
         throw common_params_fit_exception("was unable to fit model into system memory by reducing context, abort");
+    }
+
+    // For tensor split mode: verify memory targets after context reduction
+    // Tensor split doesn't distribute layers - each GPU holds a shard of every layer.
+    // If memory targets aren't met, we can't adjust layer distribution, so throw.
+    if (mparams->split_mode == LLAMA_SPLIT_MODE_TENSOR) {
+        LOG_TRC("%s: verifying memory targets for SPLIT_MODE_TENSOR after context reduction:\n", __func__);
+        dmds_t dmds_tensor = common_get_device_memory_data_impl(path_model, mparams, cparams, devs, hp_ngl, hp_nct, hp_nex, log_level);
+        add_extra_memory(dmds_tensor);
+
+        for (size_t id = 0; id < nd; id++) {
+            const llama_device_memory_data & dmd = dmds_tensor[id];
+            const int64_t projected_used = dmd.mb.total();
+            const int64_t projected_free = dmd.free - projected_used;
+            LOG_TRC("%s:   - device %zu (%s): %6" PRId64 " MiB used, %6" PRId64 " MiB free vs. target of %6" PRId64 " MiB\n",
+                __func__, id, dev_names[id].c_str(), projected_used/MiB, projected_free/MiB, margins[id]/MiB);
+        }
+
+        bool all_targets_met = true;
+        for (size_t id = 0; id < nd; id++) {
+            const llama_device_memory_data & dmd = dmds_tensor[id];
+            const int64_t projected_free = dmd.free - dmd.mb.total();
+            if (projected_free < margins[id]) {
+                all_targets_met = false;
+                break;
+            }
+        }
+
+        if (all_targets_met) {
+            LOG_TRC("%s: SPLIT_MODE_TENSOR memory targets met on all devices\n", __func__);
+            return;
+        } else {
+            std::string msg = "was unable to fit tensor-split model: memory targets not met on all devices after context reduction";
+            LOG_WRN("%s: %s\n", __func__, msg.c_str());
+            throw common_params_fit_exception(msg);
+        }
     }
 
     if (mparams->n_gpu_layers != default_mparams.n_gpu_layers) {
