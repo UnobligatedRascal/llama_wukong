@@ -3,6 +3,9 @@
 #include "ggml-backend-impl.h"
 
 #include "ggml-cuda/allreduce.cuh"
+#include "ggml-cuda/async-pipeline.cuh"
+#include "ggml-cuda/nccl-stagger.cuh"
+#include "ggml-cuda/numa-gpu-bind.cuh"
 #include "ggml-cuda/common.cuh"
 #include "ggml-cuda/acc.cuh"
 #include "ggml-cuda/add-id.cuh"
@@ -92,6 +95,9 @@
 
 static_assert(sizeof(half) == sizeof(ggml_fp16_t), "wrong fp16 size");
 
+
+// Global async pipeline context (initialized at backend init)
+ggml_cuda_async_pipeline ggml_cuda_async_pipeline_global;
 #define GGML_LOG_WARN_ONCE(str) \
     { static std::once_flag warn_flag; std::call_once(warn_flag, []() { GGML_LOG_WARN(str); }); }
 
@@ -407,6 +413,14 @@ static ggml_cuda_device_info ggml_cuda_init() {
     }
 
     return info;
+
+    // Initialize NCCL env vars for K80 topology
+#ifdef GGML_USE_NCCL
+    ggml_cuda_nccl_init_env();
+#endif
+    // Enable async pipeline (lazy init - no cudaSetDevice calls here)
+    ggml_cuda_async_pipeline_global.enable();
+    GGML_LOG_INFO("Async GPU pipeline: enabled (lazy init per-GPU on first use)\n");
 }
 
 const ggml_cuda_device_info & ggml_cuda_info() {
@@ -4259,6 +4273,13 @@ static void ggml_cuda_graph_evaluate_and_capture(ggml_backend_cuda_context * cud
                     GGML_LOG_ERROR("%s: op not supported %s (%s)\n", __func__, node->name, ggml_op_name(node->op));
                 }
                 GGML_ASSERT(ok);
+
+
+                // Async pipeline: mark completion only for heavy compute ops
+                // (lazy init - creates prefetch stream only on first access)
+                if (node->op == GGML_OP_MUL_MAT || node->op == GGML_OP_MUL_MAT_ID) {
+                    ggml_cuda_async_mark_layer_complete(cuda_ctx->device, cuda_ctx->stream());
+                }
 
                 if (!is_concurrent_event_active) {
                     try_launch_concurrent_event(node);
