@@ -7,6 +7,7 @@
 #include "ggml-cuda/nccl-stagger.cuh"
 #include "ggml-cuda/numa-gpu-bind.cuh"
 #include "ggml-cuda/common.cuh"
+#include "ggml-cuda/rope-lut.cuh"
 #include "ggml-cuda/acc.cuh"
 #include "ggml-cuda/add-id.cuh"
 #include "ggml-cuda/arange.cuh"
@@ -411,6 +412,14 @@ static ggml_cuda_device_info ggml_cuda_init() {
             }
         }
     }
+
+    // Initialize RoPE sin/cos lookup tables on each physical device
+    for (int id = 0; id < info.physical_device_count; ++id) {
+        CUDA_CHECK(cudaSetDevice(id));
+        rope_lut::init_rope_lut();
+    }
+    GGML_LOG_INFO("RoPE LUT: initialized on %d device(s) (%d entries, bilinear interp)\n",
+                  info.physical_device_count, ROPE_LUT_SIZE);
 
     return info;
 
@@ -998,6 +1007,7 @@ struct ggml_backend_cuda_comm_context {
 
 #ifdef GGML_USE_NCCL
     std::vector<ncclComm_t>     comms;
+    ggml_cuda_nccl_numa_comms   numa_comms;  // NUMA-aware sub-communicators
 #endif // GGML_USE_NCCL
 
     ~ggml_backend_cuda_comm_context() {
@@ -1030,22 +1040,37 @@ static bool ggml_backend_cuda_comm_allreduce_nccl(
         GGML_ASSERT(ggml_is_contiguously_allocated(tensors[i]));
     }
 
+    // Collect streams and tensor pointers for NUMA-aware allreduce
+    std::vector<cudaStream_t> streams(n_backends);
+    std::vector<void*> tensor_ptrs(n_backends);
+    for (size_t i = 0; i < n_backends; ++i) {
+        ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *) comm_ctx->backends[i]->context;
+        streams[i] = cuda_ctx->stream();
+    }
+
     // For small tensors, simply reduce them as FP32.
     // The following heuristic for how "small" a tensor should be is based on RTX 4090s connected via 16x PCIe 4.0.
     if ((n_backends <= 2 && ne < 32768) || (n_backends == 3 && ne < 131072) || (n_backends >= 4 && ne < 262144)) {
         for (size_t i = 0; i < n_backends; ++i) {
+            tensor_ptrs[i] = tensors[i]->data;
             if ((tensors[i]->flags & GGML_TENSOR_FLAG_COMPUTE) == 0) {
                 ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *) comm_ctx->backends[i]->context;
                 ggml_cuda_set_device(cuda_ctx->device);
                 CUDA_CHECK(cudaMemsetAsync(tensors[i]->data, 0, ggml_nbytes(tensors[i]), cuda_ctx->stream()));
             }
         }
-        NCCL_CHECK(ncclGroupStart());
-        for (size_t i = 0; i < n_backends; ++i) {
-            ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *) comm_ctx->backends[i]->context;
-            NCCL_CHECK(ncclAllReduce(tensors[i]->data, tensors[i]->data, ne, ncclFloat, ncclSum, comm_ctx->comms[i], cuda_ctx->stream()));
+
+        // Use NUMA-aware allreduce if available, else standard NCCL allreduce
+        if (comm_ctx->numa_comms.valid && n_backends >= 4) {
+            ggml_cuda_nccl_numa_allreduce(comm_ctx->comms, comm_ctx->numa_comms, streams, tensor_ptrs, ne, ncclSum);
+        } else {
+            NCCL_CHECK(ncclGroupStart());
+            for (size_t i = 0; i < n_backends; ++i) {
+                ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *) comm_ctx->backends[i]->context;
+                NCCL_CHECK(ncclAllReduce(tensor_ptrs[i], tensor_ptrs[i], ne, ncclFloat, ncclSum, comm_ctx->comms[i], streams[i]));
+            }
+            NCCL_CHECK(ncclGroupEnd());
         }
-        NCCL_CHECK(ncclGroupEnd());
         return true;
     }
 
@@ -1068,12 +1093,22 @@ static bool ggml_backend_cuda_comm_allreduce_nccl(
         CUDA_CHECK(cudaGetLastError());
     }
 
-    NCCL_CHECK(ncclGroupStart());
+    // Collect BF16 temp pointers
     for (size_t i = 0; i < n_backends; ++i) {
-        ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *) comm_ctx->backends[i]->context;
-        NCCL_CHECK(ncclAllReduce(tmp[i].get(), tmp[i].get(), ne, ncclBfloat16, ncclSum, comm_ctx->comms[i], cuda_ctx->stream()));
+        tensor_ptrs[i] = tmp[i].get();
     }
-    NCCL_CHECK(ncclGroupEnd());
+
+    // Use NUMA-aware allreduce for BF16 path if available
+    if (comm_ctx->numa_comms.valid && n_backends >= 4) {
+        ggml_cuda_nccl_numa_allreduce(comm_ctx->comms, comm_ctx->numa_comms, streams, tensor_ptrs, ne, ncclSum);
+    } else {
+        NCCL_CHECK(ncclGroupStart());
+        for (size_t i = 0; i < n_backends; ++i) {
+            ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *) comm_ctx->backends[i]->context;
+            NCCL_CHECK(ncclAllReduce(tmp[i].get(), tmp[i].get(), ne, ncclBfloat16, ncclSum, comm_ctx->comms[i], streams[i]));
+        }
+        NCCL_CHECK(ncclGroupEnd());
+    }
 
     for (size_t i = 0; i < n_backends; ++i) {
         ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *) comm_ctx->backends[i]->context;
@@ -1199,17 +1234,30 @@ static void ggml_backend_cuda_comm_init_nccl(ggml_backend_cuda_comm_context * re
         return;
     }
 
+    // Initialize NUMA-aware NCCL environment variables
+    ggml_cuda_nccl_init_env();
+
     const size_t n = ret->dev_ids.size();
     ret->comms.resize(n);
     ncclResult_t rc = ncclCommInitAll(ret->comms.data(), (int) n, ret->dev_ids.data());
-    if (rc == ncclSuccess) {
-        ret->try_allreduce = ggml_backend_cuda_comm_try_allreduce_nccl;
+    if (rc != ncclSuccess) {
+        ret->comms.clear();
+        GGML_LOG_WARN("NCCL init failed (%s); falling back to internal AllReduce\n",
+                      ncclGetErrorString(rc));
+        ggml_backend_cuda_comm_init_internal(ret);
         return;
     }
 
-    ret->comms.clear();
-    GGML_LOG_WARN("NCCL init failed (%s); falling back to internal AllReduce\n",
-                  ncclGetErrorString(rc));
+    // Create NUMA-aware sub-communicators for staggered allreduce
+    ggml_cuda_nccl_init_numa_comms(ret->comms, ret->dev_ids, ret->numa_comms);
+
+    // Pin NCCL worker threads to NUMA-local cores
+    for (size_t i = 0; i < n; i++) {
+        ggml_cuda_set_device(ret->dev_ids[i]);
+        ggml_cuda_numa_pin_thread_for_gpu(ret->dev_ids[i], (int)i);
+    }
+
+    ret->try_allreduce = ggml_backend_cuda_comm_try_allreduce_nccl;
 #else // GGML_USE_NCCL
 #ifndef GGML_USE_HIP
     GGML_LOG_WARN("NCCL not compiled in; falling back to internal AllReduce.  "
