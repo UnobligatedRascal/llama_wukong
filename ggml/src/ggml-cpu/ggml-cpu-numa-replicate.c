@@ -133,6 +133,15 @@ static void *ggml_numa_rep_alloc_onnode(size_t size, int node) {
 void ggml_numa_replicate_init(void) {
     if (g_numa_rep.enabled) return;
 
+    /* Runtime disable via env var */
+    {
+        const char *env = getenv("GGML_NUMA_REPLICATE");
+        if (env != NULL && atoi(env) == 0) {
+            fprintf(stderr, "ggml_numa_replicate: DISABLED by GGML_NUMA_REPLICATE=0\n");
+            return;
+        }
+    }
+
     if (numa_available() < 0) {
         fprintf(stderr, "ggml_numa_replicate: libnuma not available\n");
         return;
