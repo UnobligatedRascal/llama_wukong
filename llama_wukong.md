@@ -51,14 +51,14 @@ sudo GGML_CUDA_P2P=1 -E nice -n -20 numactl --interleave=all ./build/bin/llama-s
 
 ## Vision
 
-Two-phase optimization of llama.cpp for NOUGHT's specific hardware to run
-Qwen3.8-Flash-Next (180B total params, 6B active/token) at practical throughput.
+Optimize llama.cpp for NOUGHT's specific hardware to run large models
+(27B–40B+ parameters) efficiently on aging Kepler sm_37 GPUs.
 
-Phase 1: NOUGHT-specific hardware optimizations (NUMA, async pipeline,
-custom kernels, memory tricks)
-
-Phase 2: Qwen4-exp architecture integration (GDN/QSA, hyper-connection
-tensors, ultra-sparse MoE routing, MTP head)
+Focus: hardware optimizations applicable to any model architecture:
+- NUMA-aware weight replication across dual Xeon sockets
+- Async multi-GPU pipeline hiding PCIe latency
+- sm_37-compatible CUDA kernels (FP32, no tensor cores)
+- Memory tuning for VRAM-constrained Kepler hardware
 
 See ARCHITECTURE_REFERENCE.md for the original architectural pitch with
 full memory topology diagrams, execution pipeline mermaid visualization,
@@ -245,14 +245,14 @@ Phase 2 tasks (Qwen4-exp architecture: GDN/QSA layer scheduling, hyper-connectio
 
 ### Why This Hardware Fits
 
-Qwen3.8-Flash-Next is memory-bound, compute-light:
-- 6B active params -> fits in 96GB VRAM at IQ3_XXS (~82GB)
-- GDN layers avoid KV cache growth -> constant memory per step
-- MoE sparsity -> most weights never loaded simultaneously
+Large models on Kepler are memory-bound, compute-light:
+- Quantized weights (Q4_K_M, Q3_K_S) keep 27B–40B models in 96GB VRAM
+- Tensor splitting across 8 GK210 chips enables models beyond single-GPU capacity
+- KV cache quantization further reduces VRAM pressure
 
 Kepler GK210 strengths exploited:
-- 512KB/SM register file -> GDN state pinning
-- 240 GB/s memory bandwidth -> weight streaming for MoE
+- 512KB/SM register file -> efficient state management
+- 240 GB/s memory bandwidth -> weight streaming for large models
 - 8 independent chips -> layer-split parallelism
 - Hyper-Q -> concurrent CUDA streams for async pipeline
 
