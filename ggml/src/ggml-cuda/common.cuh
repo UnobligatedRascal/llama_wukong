@@ -37,6 +37,7 @@
 #elif defined(GGML_USE_MUSA)
 #include "vendors/musa.h"
 #else
+#include "rope-lut.cuh"
 #include "vendors/cuda.h"
 #endif // defined(GGML_USE_HIP)
 
@@ -1479,6 +1480,9 @@ struct ggml_backend_cuda_context {
     explicit ggml_backend_cuda_context(int device) :
         device(device),
         name(GGML_CUDA_NAME + std::to_string(device)) {
+        // Initialize RoPE LUT on this GPU
+        ggml_cuda_set_device(device);
+        rope_lut::init_rope_lut();
     }
 
     ggml_cuda_stream_context concurrent_stream_context;
