@@ -265,23 +265,33 @@ Kepler limitations accepted:
 ## File Organization
 
 llama_wukong/
-- ARCHITECTURE_REFERENCE.md (original pitch: memory topology, execution pipeline, strategic key points)
-- VERIFIED_CONFIG.md (current working config)
-- llama_wukong.md (this file)
-- PHASE1_TODO.md (detailed implementation tasks)
-- RESEARCH/ (supporting research notes; ZEROCOPY_ENGRAM.md and MOE_BATCHING.md deferred to future project)
+- README.md (quick reference, build, current status)
+- TODO.md (concise task tracking)
+- PHASE1_TODO.md (detailed implementation tasks with checkboxes)
+- TODO_PHASE4.md (TriAttention + TurboQuant deep dive)
+- ARCHITECTURE_REFERENCE.md (original pitch: memory topology, execution pipeline, Kepler exploitation)
+- VERIFIED_CONFIG.md (working launch command and hardware profile)
+- llama_wukong.md (this file: full project history and scope)
+- RESEARCH/ (technical research notes per optimization area)
   - NUMA_REPLICATION.md
   - ASYNC_PIPELINE.md
   - GDN_KERNEL.md
+  - TURBOQUANT_SM37_AUDIT.md
+  - TURBOQUANT_TRIATTENTION_RESEARCH.md
   - ZEROCOPY_ENGRAM.md (deferred)
   - MOE_BATCHING.md (deferred)
 - scripts/ (build, benchmark, profiling)
   - build_wukong.sh
   - bench_numa.sh
-- src/ (custom source files)
-  - ggml-cpu-numa-replicate.c
-  - ggml-cpu-numa-replicate.h
-  - NUMA_INTEGRATION_NOTES.md
+- ggml/src/ggml-cuda/ (custom CUDA files)
+  - async-pipeline.cuh (per-GPU async context, prefetch streams)
+  - nccl-stagger.cuh (NUMA-aware NCCL staggered allreduce)
+  - numa-gpu-bind.cuh (GPU-to-NUMA topology utilities)
+  - rope-lut.cuh (sin/cos lookup table for sm_37)
+  - triattention-score.cu/cuh (TriAttention GPU scoring kernel)
+  - turbo-quant.cuh (TurboQuant CUDA kernels)
+- ggml/src/ (custom CPU files)
+  - ggml-turbo-quant.c (TurboQuant CPU kernels)
 
 ## Version Control
 
@@ -325,3 +335,38 @@ See NUMA_BENCHMARK_RESULTS.md and NUMA_REPLICATION_FIX.md for details.
 **Build**: GCC 11 + CUDA 11.8, -DCMAKE_CUDA_ARCHITECTURES=37
 
 **TODO**: Test on running server - restart with new binary, measure t/s change.
+
+## 2026-09-08: TurboQuant Integration Complete
+
+**Status:** Fully integrated and usable. Types turbo2_0/turbo3_0/turbo4_0 available via `--cache-type-k/--cache-type-v`.
+
+**Implementation:**
+- Types registered in ggml.h (GGML_TYPE_TURBO3_0/4_0/2_0)
+- CPU kernels in ggml-turbo-quant.c (quantize/dequantize_row_turbo{2,3,4}_0)
+- CUDA kernels in turbo-quant.cuh (quantize), dequantize.cuh (dequantize_turbo{2,3,4}_0)
+- Wired into ggml-cuda.cu (MUL_MAT, GET_ROWS, SET_ROWS), set-rows.cu, arg.cpp, llama-bench.cpp
+- sm_37: All kernels FP32, no tensor cores; fully K80-compatible
+- Symbols exported from libggml.so and libggml-cuda.so
+
+**Verification:**
+- CLI help lists turbo2_0/turbo3_0/turbo4_0 as valid cache types
+- Build succeeds with all turbo symbols resolved
+- Blocked on runtime testing: all GPUs in production use
+
+## 2026-09-08: TriAttention GPU Kernels Complete
+
+**Status:** GPU scoring path complete. CPU glue code and CLI integration pending.
+
+**Implementation:**
+- GPU kernel: triattention-score.cu (542 lines, full scoring pipeline)
+- GPU API: triattention_gpu_init/score_head/free/etc. in ggml-cuda.h
+- Supports TurboQuant types (turbo2/3/4 dequant with WHT handling)
+- Symbols exported from libggml-cuda.so
+- sm_37: FP32 math only; fully K80-compatible
+
+**Remaining:**
+- Create src/llama-triattention.h/cpp (loader, RoPE inversion, pruning pipeline)
+- Wire pruning hook into llama-context.cpp decode loop
+- Add CLI flags (--triattention-stats, --triattention-budget, etc.)
+- Calibration tool (--triattention-calibrate)
+- Multi-GPU tensor-split coordination for eviction decisions

@@ -54,14 +54,15 @@ Priority order based on ROI and complexity.
 - [x] See RESEARCH/TURBOQUANT_SM37_AUDIT.md for details
 
 ### 2.2 Backend Integration
-- [x] Add TurboQuant as selectable quant backend (-DGGML_TURBOQUANT=ON)
-- [x] Wire into ggml backend buffer alloc for quantized weights
+- [x] Add TurboQuant KV cache types (GGML_TYPE_TURBO3_0/4_0/2_0)
+- [x] Wire into ggml type registration (ggml.c: to_float/from_float_ref)
 - [x] Add turbo types to set_rows CUDA kernel (KV cache writes)
 - [x] Add turbo dequant functions to dequantize.cuh
-- [x] Wire turbo types into ggml-cuda.cu (MUL_MAT, GET_ROWS, SET_ROWS support)
+- [x] Wire turbo types into ggml-cuda.cu (MUL_MAT, GET_ROWS, SET_ROWS)
 - [x] Add turbo types to kv_cache_types in arg.cpp (--cache-type-k/--cache-type-v)
 - [x] Add turbo types to llama-bench.cpp type parser
 - [x] Standardize turbo4_0 as 4-bit PolarQuant (no QJL, 68-byte block)
+- [x] Verified: CLI accepts turbo2_0/turbo3_0/turbo4_0; symbols exported from libggml-cuda.so
 - [ ] CPU set_rows support for turbo types (blocked - CPU path not needed for GPU KV cache)
 
 ### 2.3 Dequantization Kernels
@@ -86,19 +87,25 @@ Priority order based on ROI and complexity.
 **K80 note:** GPU kernel should work on sm_37 (no tensor cores needed). See RESEARCH/TURBOQUANT_TRIATTENTION_RESEARCH.md
 
 ### 3.1 Research & Design
-- [ ] Clone and review TriAttention implementation
-- [ ] Understand pruning mechanism and attention recomputation strategy
-- [ ] Assess fit for long-context workloads on NOUGHT hardware
-- [ ] Map integration points in llama.cpp attention path
+- [x] Clone and review TriAttention implementation (atomicmilkshake fork)
+- [x] Understand pruning mechanism and attention recomputation strategy
+- [x] Assess fit for long-context workloads on NOUGHT hardware
+- [x] Map integration points in llama.cpp attention path
+- [x] sm_37 audit: GPU kernel uses only FP32 math, no tensor cores; fully compatible
 
 ### 3.2 Kernel Implementation
-- [ ] Implement TriAttention pruning pass after standard attention
-- [ ] Adapt for ggml tensor format and current attention ops
-- [ ] Handle multi-GPU tensor-split compatibility
+- [x] GPU scoring kernel: triattention-score.cu (542 lines, full implementation)
+- [x] GPU API: triattention_gpu_init/score_head/free/etc. declared in ggml-cuda.h
+- [x] GPU kernel supports TurboQuant types (turbo2/3/4 dequant paths with WHT)
+- [x] Symbols exported from libggml-cuda.so
+- [ ] CPU-side llama-triattention.h/cpp (loader, RoPE inversion, pruning pipeline)
+- [ ] Multi-GPU tensor-split coordination for eviction decisions
 
 ### 3.3 Context Window Integration
-- [ ] Wire into llama_batch processing for long context (>8K tokens)
-- [ ] Add config flags (--triattention, --prune-threshold, etc.)
+- [ ] CPU-side llama-triattention.h/cpp (loader, RoPE inversion, pruning pipeline)
+- [ ] Wire pruning hook into llama-context.cpp decode loop
+- [ ] Add CLI flags (--triattention-stats, --triattention-budget, etc.)
+- [ ] Calibration tool (--triattention-calibrate)
 - [ ] Ensure backward compatibility (disabled by default)
 
 ### 3.4 Verification
