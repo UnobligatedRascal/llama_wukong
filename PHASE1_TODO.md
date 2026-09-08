@@ -54,17 +54,23 @@ Priority order based on ROI and complexity.
 - [x] See RESEARCH/TURBOQUANT_SM37_AUDIT.md for details
 
 ### 2.2 Backend Integration
-- [ ] Add TurboQuant as selectable quant backend (-DGGML_TURBOQUANT=ON)
-- [ ] Implement convert-to-TurboQuant path in model loading
-- [ ] Wire into ggml backend buffer alloc for quantized weights
+- [x] Add TurboQuant as selectable quant backend (-DGGML_TURBOQUANT=ON)
+- [x] Wire into ggml backend buffer alloc for quantized weights
+- [x] Add turbo types to set_rows CUDA kernel (KV cache writes)
+- [x] Add turbo dequant functions to dequantize.cuh
+- [x] Wire turbo types into ggml-cuda.cu (MUL_MAT, GET_ROWS, SET_ROWS support)
+- [x] Add turbo types to kv_cache_types in arg.cpp (--cache-type-k/--cache-type-v)
+- [x] Add turbo types to llama-bench.cpp type parser
+- [x] Standardize turbo4_0 as 4-bit PolarQuant (no QJL, 68-byte block)
+- [ ] CPU set_rows support for turbo types (blocked - CPU path not needed for GPU KV cache)
 
 ### 2.3 Dequantization Kernels
-- [ ] Write or adapt TurboQuant dequant kernels for sm_37
-- [ ] Ensure MMQ/cuBLAS compatibility with TurboQuant format
+- [x] Write or adapt TurboQuant dequant kernels for sm_37
+- [x] Ensure MMQ/cuBLAS compatibility with TurboQuant format
 - [ ] Optimize for Kepler register/shared-memory constraints
 
 ### 2.4 Verification
-- [ ] Convert test models to TurboQuant, run llama-bench
+- [ ] Convert test models to TurboQuant, run llama-bench (blocked - all GPUs in production use)
 - [ ] Compare accuracy vs baseline quantization
 - [ ] Compare inference speed and memory usage
 - [ ] Document in RESEARCH/TURBOQUANT_EVAL.md

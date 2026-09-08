@@ -15,6 +15,9 @@
 #include <assert.h>
 #include <stdlib.h>
 
+/* Use 4-bit PolarQuant format for turbo4_0 (no QJL) */
+#define TURBO4_USE_4BIT 1
+
 /* Global: WHT group size for CPU quantize path (set by CPU SET_ROWS handler) */
 int turbo3_cpu_wht_group_size = 0;
 

@@ -288,17 +288,16 @@ typedef struct {
 } block_turbo3_0;
 static_assert(sizeof(block_turbo3_0) == sizeof(ggml_half) + QK_TURBO3/4 + QK_TURBO3/8, "wrong turbo3_0 block size");
 
-// TurboQuant 4-bit: 3-bit PolarQuant + 1-bit QJL signs (legacy format)
+// TurboQuant 4-bit: 4-bit PolarQuant (no QJL)
 // Block size = 128
-// Per block: norm(fp16) + rnorm(fp16) + 3-bit indices (48 bytes) + QJL signs (16 bytes) = 68 bytes
+// Per block: norm(fp16) + rnorm(fp16, reserved) + 4-bit indices (64 bytes) = 68 bytes
 // = 4.25 bits/value → 3.8× compression vs fp16
 #define QK_TURBO4 128
 #define QK_TURBO4_GROUP 128
 typedef struct {
-    ggml_half  norm;                    // 2 bytes: vector L2 norm
-    ggml_half  rnorm;                   // 2 bytes: residual norm for QJL scale
-    uint8_t    qs[QK_TURBO4 * 3 / 8];  // 48 bytes: 3-bit PolarQuant indices
-    uint8_t    signs[QK_TURBO4 / 8];   // 16 bytes: 1-bit QJL signs
+    ggml_half  norm;                    // 2 bytes: corrected L2 norm
+    ggml_half  rnorm;                   // 2 bytes: reserved (set to 0)
+    uint8_t    qs[QK_TURBO4 / 2];      // 64 bytes: 4-bit PolarQuant indices (2 per byte)
 } block_turbo4_0;
 static_assert(sizeof(block_turbo4_0) == 68, "wrong turbo4_0 block size");
 
