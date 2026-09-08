@@ -106,7 +106,7 @@ See TODO_PHASE4.md for full detailed plan.
 
 ## Build Config (NOUGHT)
 ```bash
-cd /home/whistler/llama_wukong && rm -rf build && mkdir build && cd build
+cd <project-root> && rm -rf build && mkdir build && cd build
 cmake .. \
   -DCMAKE_BUILD_TYPE=Release \
   -DGGML_CUDA=ON \
@@ -132,19 +132,19 @@ make -j18 llama-server
 ## Test Command (Working)
 ```bash
 sudo GGML_CUDA_P2P=1 -E nice -n -20 numactl \
-  /home/whistler/llama_wukong/build/bin/llama-server \
-  -m /mnt/512gb_ssd/models/Qwen3.6-27B-Fable-Fus-711-UnHeretic-NM-DAU-NEO-MAX-NEO-MTP-Q4_K_M.gguf \
+  ./build/bin/llama-server \
+  -m /path/to/models/Qwen3.6-27B-Fable-Fus-711-UnHeretic-NM-DAU-NEO-MAX-NEO-MTP-Q4_K_M.gguf \
   -t 18 -c 262144 -ngl 99 \
-  --port 4269 --host 0.0.0.0 --api-key Squigg5McPeter! \
-  --jinja --chat-template-file /home/whistler/models/tuvak.jinja \
+  --port 4269 --host 0.0.0.0 --api-key YOUR_API_KEY_HERE \
+  --jinja --chat-template-file ./models/tuvak.jinja \
   --load-mode none -np 2 \
   --ctx-checkpoints 64 --checkpoint-min-step 4096 --cache-ram 65536 \
-  --mmproj /mnt/512gb_ssd/models/Qwen3.6-27B-mmproj-F16.gguf --no-mmproj-offload \
+  --mmproj /path/to/models/Qwen3.6-27B-mmproj-F16.gguf --no-mmproj-offload \
   --image-min-tokens 1024 \
   --batch-size 2048 --ubatch-size 512 \
   --cache-type-k q4_0 --cache-type-v q4_0 \
   --tensor-split 1,1,1,1,1,1,1,1 \
-  --kv-unified --slot-save-path /mnt/512gb_ssd/models/kv_cache/4269 \
+  --kv-unified --slot-save-path /path/to/models/kv_cache/4269 \
   --seed 1016 \
   --spec-type draft-mtp --spec-draft-p-min 0.75 --spec-draft-n-max 3
 ```
@@ -157,8 +157,8 @@ sudo GGML_CUDA_P2P=1 -E nice -n -20 numactl \
 - fit.cpp: Tensor-split-aware memory fitting logic
 
 ## System Info
-- **Server**: NOUGHT (192.168.137.29, Debian/Q4OS)
-- **Path**: /home/whistler/llama_wukong
+- **Server**: NOUGHT (<internal-ip>, Debian/Q4OS)
+- **Path**: <project-root>
 - **GPU**: 8x Tesla K80 (Kepler sm_37, 11GB each)
   - NUMA0: GPU0-3 (PIX-linked pairs: 0-1, 2-3)
   - NUMA1: GPU4-7 (PIX-linked pairs: 4-5, 6-7)

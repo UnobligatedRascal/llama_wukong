@@ -31,13 +31,13 @@ llama_wukong extends llama.cpp with NOUGHT-specific optimizations for running la
 ## Build (NOUGHT)
 
 ```bash
-cd /home/whistler/llama_wukong
+cd <project-root>
 ./scripts/build_wukong.sh
 ```
 
 Or manually:
 ```bash
-cd /home/whistler/llama_wukong
+cd <project-root>
 rm -rf build && mkdir build && cd build
 cmake .. \
   -DCMAKE_BUILD_TYPE=Release \

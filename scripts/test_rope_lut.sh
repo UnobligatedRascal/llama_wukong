@@ -13,7 +13,7 @@ set -euo pipefail
 PROJ="/home/whistler/llama_wukong"
 MODEL="/mnt/512gb_ssd/models/Qwen3.6-27B-Fable-Fus-711-UnHeretic-NM-DAU-NEO-MAX-NEO-MTP-Q4_K_M.gguf"
 TEMPLATE="/home/whistler/models/tuvak.jinja"
-API_KEY="Squigg5McPeter!"
+API_KEY="YOUR_API_KEY_HERE"
 BUILD_DIR="$PROJ/build"
 LOG_DIR="$PROJ/test_logs/rope_lut_$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$LOG_DIR"

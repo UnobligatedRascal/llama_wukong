@@ -27,7 +27,7 @@ git clone https://github.com/UnobligatedRascal/llama_wukong && cd llama_wukong &
 ## Run Command (Verified Working, 2026-09-05)
 
 ```bash
-sudo GGML_CUDA_P2P=1 -E nice -n -20 numactl --interleave=all /home/whistler/llama_wukong/build/bin/llama-server -m /mnt/512gb_ssd/models/Qwen3.6-27B-Fable-Fus-711-UnHeretic-NM-DAU-NEO-MAX-NEO-MTP-Q4_K_M.gguf -t 36 -c 262144 -ngl 99  --port 4269 --host 0.0.0.0 --api-key Squigg5McPeter! --jinja --chat-template-file /home/whistler/models/tuvak.jinja --load-mode none -np 3 --ctx-checkpoints 64 --checkpoint-min-step 4096 --cache-ram 65536 --mmproj /mnt/512gb_ssd/models/Qwen3.6-27B-mmproj-F16.gguf --no-mmproj-offload  --image-min-tokens 1024 --batch-size 2048 --ubatch-size 512 --cache-type-k q4_0 --cache-type-v q4_0 --tensor-split 1,1,1,1,1,1,1,1 --kv-unified --slot-save-path /mnt/512gb_ssd/models/kv_cache --seed 1016 --spec-type draft-mtp --spec-draft-p-min 0.75 --spec-draft-n-max 3 --split-mode tensor
+sudo GGML_CUDA_P2P=1 -E nice -n -20 numactl --interleave=all ./build/bin/llama-server -m /path/to/models/Qwen3.6-27B-Fable-Fus-711-UnHeretic-NM-DAU-NEO-MAX-NEO-MTP-Q4_K_M.gguf -t 36 -c 262144 -ngl 99  --port 4269 --host 0.0.0.0 --api-key YOUR_API_KEY_HERE --jinja --chat-template-file ./models/tuvak.jinja --load-mode none -np 3 --ctx-checkpoints 64 --checkpoint-min-step 4096 --cache-ram 65536 --mmproj /path/to/models/Qwen3.6-27B-mmproj-F16.gguf --no-mmproj-offload  --image-min-tokens 1024 --batch-size 2048 --ubatch-size 512 --cache-type-k q4_0 --cache-type-v q4_0 --tensor-split 1,1,1,1,1,1,1,1 --kv-unified --slot-save-path /path/to/models/kv_cache --seed 1016 --spec-type draft-mtp --spec-draft-p-min 0.75 --spec-draft-n-max 3 --split-mode tensor
 ```
 
 **Key flags rationale:**

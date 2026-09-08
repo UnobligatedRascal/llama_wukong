@@ -41,7 +41,7 @@ Priority order based on ROI and complexity.
 - TheTom/turboquant_plus (research: Python reference impl)
 - atomicmilkshake/llama-cpp-turboquant (llama.cpp fork with CUDA kernels)
 
-**Local clones:** `/home/whistler/turboquant_plus` and `/home/whistler/llama-cpp-turboquant`
+**Local clones:** `<path>/turboquant_plus` and `<path>/llama-cpp-turboquant`
 
 **K80 note:** Fork targets Turing+ (sm_75+); need sm_37 FP32 fallback audit. See RESEARCH/TURBOQUANT_TRIATTENTION_RESEARCH.md
 
@@ -81,7 +81,7 @@ Priority order based on ROI and complexity.
 - domvox/triattention-ggml (standalone HIP/ROCm implementation)
 - atomicmilkshake/llama-cpp-turboquant (has CUDA triattention-score.cu integrated)
 
-**Local clone:** `/home/whistler/triattention-ggml`
+**Local clone:** `<path>/triattention-ggml`
 
 **K80 note:** GPU kernel should work on sm_37 (no tensor cores needed). See RESEARCH/TURBOQUANT_TRIATTENTION_RESEARCH.md
 
@@ -240,7 +240,7 @@ Priority order based on ROI and complexity.
 ### build_wukong.sh
 ```bash
 #!/bin/bash
-cd /home/whistler/llama_wukong
+cd <project-root>
 rm -rf build && mkdir build && cd build
 
 cmake .. \

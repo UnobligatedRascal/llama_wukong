@@ -167,7 +167,7 @@ for (int i = 0; i < n_devices; i++)
 ## Build Configuration
 
 ```bash
-cd /home/whistler/llama_wukong
+cd <project-root>
 rm -rf build && mkdir build && cd build
 cmake .. \
   -DCMAKE_BUILD_TYPE=Release \
