@@ -1,6 +1,6 @@
-# llama_wukong — Async GPU Pipeline + NCCL Optimization for 8x K80
+# llama_wukong - Async GPU Pipeline + NCCL Optimization for 8x K80
 
-## Current Status: BUILD COMPLETE — READY FOR TESTING
+## Current Status: BUILD COMPLETE - READY FOR TESTING
 
 **Latest Fix** (2026-09-06): Two critical bugs resolved enabling tensor-split + multi-slot operation.
 
@@ -9,7 +9,7 @@
 ```
 common_fit_params: failed to fit params to free device memory: llama_params_fit is not implemented for SPLIT_MODE_TENSOR, abort
 ```
-**Root Cause**: fit.cpp's `common_params_fit_impl()` threw hard for tensor-split mode. The layer-distribution logic (step 3+) only applies to layer-split mode; tensor-split needs different handling — all layers go on all GPUs, shards determined by tensor_split weights.
+**Root Cause**: fit.cpp's `common_params_fit_impl()` threw hard for tensor-split mode. The layer-distribution logic (step 3+) only applies to layer-split mode; tensor-split needs different handling - all layers go on all GPUs, shards determined by tensor_split weights.
 
 **Fix Applied** (common/fit.cpp line ~183):
 - Removed the throw for SPLIT_MODE_TENSOR
@@ -26,7 +26,7 @@ CUDA error: invalid resource handle
   current device: 0, in function record_layer_complete at async-pipeline.cuh:88
   cudaEventRecord(layer_complete_events[current_event], compute_stream)
 ```
-**Root Cause**: Race condition in async-pipeline.cuh's lazy init (`ensure_init`). The double-checked locking pattern sets `initialized=true` via CAS before the actual CUDA resource creation completes. If another thread sees `initialized=true` and calls `record_layer_complete` before events are created, null pointers → invalid resource handle.
+**Root Cause**: Race condition in async-pipeline.cuh's lazy init (`ensure_init`). The double-checked locking pattern sets `initialized=true` via CAS before the actual CUDA resource creation completes. If another thread sees `initialized=true` and calls `record_layer_complete` before events are created, null pointers to invalid resource handle.
 
 **Fix Applied** (ggml/src/ggml-cuda/async-pipeline.cuh):
 - Added null checks in `record_layer_complete()`: validates event and stream pointers before CUDA call
@@ -35,7 +35,7 @@ CUDA error: invalid resource handle
 - Defensive: if resources not ready, silently skip; next layer will retry
 
 ### Performance Optimization: Async call restricted to heavy ops
-**Issue**: Initial integration called `ggml_cuda_async_mark_layer_complete()` on every compute node in the graph (~thousands per forward pass for 27B model), causing ~35% prompt-processing regression (140→91 t/s).
+**Issue**: Initial integration called `ggml_cuda_async_mark_layer_complete()` on every compute node in the graph (~thousands per forward pass for 27B model), causing ~35% prompt-processing regression (140to91 t/s).
 
 **Fix**: Restrict async mark calls to only heavy compute operations (GGML_OP_MUL_MAT, GGML_OP_MUL_MAT_ID) where async prefetch would actually help. These represent the real layer-compute boundaries; lightweight ops (norm, rope, add, etc.) don't warrant async overhead.
 
@@ -49,7 +49,7 @@ CUDA error: invalid resource handle
 - Benchmark: ~X% improvement on NOUGHT topology
 - Files: ggml/src/ggml-cpu/ggml-cpu-numa-replicate.c
 
-### Phase 2: Async GPU Pipeline Infrastructure (COMPLETE — bugs fixed)
+### Phase 2: Async GPU Pipeline Infrastructure (COMPLETE - bugs fixed)
 - async-pipeline.cuh: Per-GPU lazy-init context with prefetch streams + double-buffered events
 - nccl-stagger.cuh: NUMA-aware NCCL env init for staggered allreduce
 - numa-gpu-bind.cuh: GPU-to-NUMA binding utilities
@@ -70,15 +70,37 @@ CUDA error: invalid resource handle
 **Why**: Stagger NUMA0 (GPU0-3) and NUMA1 (GPU4-7) NCCL allreduce calls to avoid QPI contention
 **Status**: nccl-stagger.cuh exists with implementation; needs wiring into comm path
 
-### Patch 5: Layer-Complete Mark in Compute Graph (DONE — optimized)
+### Patch 5: Layer-Complete Mark in Compute Graph (DONE - optimized)
 **What**: Call `ggml_cuda_async_mark_layer_complete()` after heavy compute ops
-**Status**: DONE — integrated at line ~4286 of ggml-cuda.cu, restricted to MUL_MAT ops
+**Status**: DONE - integrated at line ~4286 of ggml-cuda.cu, restricted to MUL_MAT ops
 **Verified**: Build successful, model loads without crash
 
 ### Patch 6: NUMA Thread Pinning for NCCL Workers
 **What**: Pin NCCL worker threads to NUMA-local cores in `ggml_backend_cuda_comm_context_init()`
 **Why**: Reduce cross-NUMA memory access for NCCL control plane
 **Status**: numa-gpu-bind.cuh exists; needs integration into comm context init
+
+---
+
+## Phase 4: TriAttention + TurboQuant KV Cache Optimization
+
+See TODO_PHASE4.md for full detailed plan.
+
+**Goal:** Integrate TriAttention (trigonometric KV eviction) and TurboQuant (WHT-rotated polar quantization) for massive KV memory savings on NOUGHT's 8x K80 cluster. Enables 256K+ context at practical VRAM usage, opens path to 1M+ context.
+
+**Timing:** Post-async-pipeline-polish. Do after Patches 4 + 6 are stable.
+
+**Reference implementations researched:**
+- atomicmilkshake/llama-cpp-turboquant (feature/triattention): Complete TriAttention + TurboQuant
+- TheTom/llama-cpp-turboquant (feature/turboquant-kv-cache): TurboQuant+ codec stack
+
+**High-level plan:**
+- 4.1 TurboQuant: Port turbo2/turbo3/turbo4 quant types + CUDA kernels (~1-2 weeks)
+- 4.2 TriAttention: Port calibration format, RoPE inversion, trig scoring, GPU kernels (~2-3 weeks)
+- 4.3 Stack: TriAttention @10% + turbo3 = ~40x effective KV compression
+- 4.4 Kepler tuning: sm_37-specific kernel adjustments
+
+**Expected on NOUGHT:** Qwen3.6-27B at 1M+ context within 8x K80 VRAM (each K80 has 11GB).
 
 ---
 
@@ -137,12 +159,12 @@ sudo GGML_CUDA_P2P=1 -E nice -n -20 numactl \
 ## System Info
 - **Server**: NOUGHT (192.168.137.29, Debian/Q4OS)
 - **Path**: /home/whistler/llama_wukong
-- **GPU**: 8× Tesla K80 (Kepler sm_37, 11GB each)
+- **GPU**: 8x Tesla K80 (Kepler sm_37, 11GB each)
   - NUMA0: GPU0-3 (PIX-linked pairs: 0-1, 2-3)
   - NUMA1: GPU4-7 (PIX-linked pairs: 4-5, 6-7)
 - **Driver**: 470.256.02, CUDA Runtime: 11.4
-- **NOTE**: llama_lazarus running on NUMA0/GPU0-3 — test wukong with NUMA1/GPU4-7 or all 8 (plenty VRAM)
+- **NOTE**: llama_lazarus running on NUMA0/GPU0-3 - test wukong with NUMA1/GPU4-7 or all 8 (plenty VRAM)
 
 ---
 Last updated: 2026-09-06
-Status: Build complete. Model loads with tensor-split + -np 2. Prompt processing speed needs verification vs baseline. Patches 4 and 6 remain for NCCL optimization.
+Status: Build complete. Model loads with tensor-split + -np 2. Prompt processing speed needs verification vs baseline. Patches 4 and 6 remain for NCCL optimization. Phase 4 (TriAttention + TurboQuant) planned for post-async-polish.

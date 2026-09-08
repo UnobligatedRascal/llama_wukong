@@ -2,7 +2,52 @@
 
 Base: llama_lazarus (UnobligatedRascal fork), commit 93c888df1
 Hardware: NOUGHT (dual Xeon E5-2697 v4, 8x Tesla K80 GK210, 128GB RAM)
-Target: Qwen3.8-Flash-Next (Qwen4 preview) optimized inference
+Target: NOUGHT hardware optimization for existing model architectures
+
+Note (2026-09-05): Qwen4-exp architecture integration (Phase 2 below) deferred to a separate future project. llama_wukong now focuses on hardware optimizations applicable to any large model: NUMA replication, async GPU pipeline, Kepler-specific kernels, memory tuning.
+
+## Build Command (Verified Working, 2026-09-05)
+
+```bash
+git clone https://github.com/UnobligatedRascal/llama_wukong && cd llama_wukong && cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON -DGGML_SCHED_MAX_COPIES=3 -DGGML_CUDA_NCCL=ON -DGGML_CUDA_FA_ALL_QUANTS=ON -DGGML_CUDA_FORCE_MMQ=ON -DGGML_CUDA_FA=ON -DGGML_CUDA_GRAPHS=OFF -DCMAKE_CUDA_ARCHITECTURES="37" -DCMAKE_CUDA_COMPILER=/usr/local/cuda-11.8/bin/nvcc -DGGML_CUDA_PEER_MAX_BATCH_SIZE=64 -DCMAKE_CUDA_HOST_COMPILER=g++-11 -DCMAKE_C_COMPILER=gcc-11 -DCMAKE_CXX_COMPILER=g++-11 -DGGML_AVX2=ON -DGGML_AVX512=OFF -DGGML_FMA=ON -DGGML_F16C=ON -DGGML_SSE42=ON -DGGML_BMI2=ON -DGGML_NATIVE=OFF -DGGML_OPENMP=ON -DLLAMA_CURL=OFF -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-rpath,/usr/local/cuda-11.8/targets/x86_64-linux/lib" -DGGML_CUDA_CUBLAS=ON && cmake --build build --config Release -j36
+```
+
+**Key flags rationale:**
+- `-DGGML_CUDA=ON -DGGML_CUDA_CUBLAS=ON`: CUDA backend + cuBLAS for Kepler
+- `-DGGML_CUDA_NCCL=ON`: NCCL for multi-GPU tensor splitting
+- `-DGGML_CUDA_FA_ALL_QUANTS=ON -DGGML_CUDA_FA=ON`: Flash attention across all quant types
+- `-DGGML_CUDA_FORCE_MMQ=ON`: Force MMQ integer path (Kepler-optimized)
+- `-DGGML_CUDA_GRAPHS=OFF`: CUDA graphs unsupported on Kepler sm_37
+- `-DCMAKE_CUDA_ARCHITECTURES="37"`: Kepler sm_37 target
+- `-DGGML_CUDA_PEER_MAX_BATCH_SIZE=64`: NCCL peer-to-peer batch sizing
+- `-DGGML_AVX2=ON -DGGML_AVX512=OFF`: Xeon E5-2697v4 supports AVX2, not AVX-512
+- `-DGGML_SCHED_MAX_COPIES=3`: Limit copy scheduling depth
+- `-j36`: 36 physical cores (no HT) for build parallelism
+
+## Run Command (Verified Working, 2026-09-05)
+
+```bash
+sudo GGML_CUDA_P2P=1 -E nice -n -20 numactl --interleave=all /home/whistler/llama_wukong/build/bin/llama-server -m /mnt/512gb_ssd/models/Qwen3.6-27B-Fable-Fus-711-UnHeretic-NM-DAU-NEO-MAX-NEO-MTP-Q4_K_M.gguf -t 36 -c 262144 -ngl 99  --port 4269 --host 0.0.0.0 --api-key Squigg5McPeter! --jinja --chat-template-file /home/whistler/models/tuvak.jinja --load-mode none -np 3 --ctx-checkpoints 64 --checkpoint-min-step 4096 --cache-ram 65536 --mmproj /mnt/512gb_ssd/models/Qwen3.6-27B-mmproj-F16.gguf --no-mmproj-offload  --image-min-tokens 1024 --batch-size 2048 --ubatch-size 512 --cache-type-k q4_0 --cache-type-v q4_0 --tensor-split 1,1,1,1,1,1,1,1 --kv-unified --slot-save-path /mnt/512gb_ssd/models/kv_cache --seed 1016 --spec-type draft-mtp --spec-draft-p-min 0.75 --spec-draft-n-max 3 --split-mode tensor
+```
+
+**Key flags rationale:**
+- `sudo GGML_CUDA_P2P=1 -E nice -n -20`: Real-time priority + P2P memory enable
+- `numactl --interleave=all`: Interleaved memory allocation across both NUMA nodes
+- `-m`: Qwen3.6-27B model (Q4_K_M quantization)
+- `-t 36`: 36 threads (one per physical core)
+- `-c 262144`: 256K context window
+- `-ngl 99`: All layers offloaded to GPU
+- `-np 3`: 3 concurrent user slots
+- `--load-mode none`: Skip initial load profiling (speeds startup)
+- `--ctx-checkpoints 64 --checkpoint-min-step 4096`: Context checkpointing for large contexts
+- `--cache-ram 65536`: 64GB RAM cache for KV state
+- `--tensor-split 1,1,1,1,1,1,1,1`: Equal tensor split across all 8 K80 chips
+- `--split-mode tensor`: Tensor parallelism mode
+- `--kv-unified`: Unified KV cache across GPUs
+- `--spec-type draft-mtp --spec-draft-p-min 0.75 --spec-draft-n-max 3`: Multi-token prediction speculative decoding
+- `--cache-type-k q4_0 --cache-type-v q4_0`: Quantized KV cache to save VRAM
+- `--mmproj`: Vision projection model for multimodal input
+- `--batch-size 2048 --ubatch-size 512`: Batch processing tuned for Kepler memory
 
 ## Vision
 
@@ -136,7 +181,9 @@ Action: Run controlled benchmarks comparing:
 - cuBLAS F32 path (GGML_CUDA_FORCE_CUBLAS=ON)
 - Mixed: cuBLAS for dense layers, MMQ for small ops
 
-## Phase 2: Qwen4-exp Architecture Integration
+## Phase 2: Qwen4-exp Architecture Integration (DEFERRED - FUTURE WORK)
+
+> Moved to future project. llama_wukong scope is now NOUGHT hardware optimization only.
 
 ### 2.1 Group-of-4 Layer Scheduling
 
@@ -190,6 +237,10 @@ Status: llama.cpp's speculative decoding does not yet support qwen4exp MTP.
 
 Action: Monitor upstream, implement when pipeline lands.
 
+## Scope Note (2026-09-05)
+
+Phase 2 tasks (Qwen4-exp architecture: GDN/QSA layer scheduling, hyper-connection tensors, 512-expert MoE, Muon split handling, MTP head) have been deferred to a separate future project. Phase 1 hardware optimizations (NUMA, async pipeline, Kepler kernels, cuBLAS tuning) remain in scope and apply to any model running on NOUGHT.
+
 ## Hardware-Aware Design Decisions
 
 ### Why This Hardware Fits
@@ -218,12 +269,12 @@ llama_wukong/
 - VERIFIED_CONFIG.md (current working config)
 - llama_wukong.md (this file)
 - PHASE1_TODO.md (detailed implementation tasks)
-- RESEARCH/ (supporting research notes)
+- RESEARCH/ (supporting research notes; ZEROCOPY_ENGRAM.md and MOE_BATCHING.md deferred to future project)
   - NUMA_REPLICATION.md
   - ASYNC_PIPELINE.md
   - GDN_KERNEL.md
-  - ZEROCOPY_ENGRAM.md
-  - MOE_BATCHING.md
+  - ZEROCOPY_ENGRAM.md (deferred)
+  - MOE_BATCHING.md (deferred)
 - scripts/ (build, benchmark, profiling)
   - build_wukong.sh
   - bench_numa.sh
@@ -255,3 +306,22 @@ Use `numactl --cpunodebind=0 --membind=0 -t 18` instead of `--numa mirror`. Prov
 Full NUMA replication requires kernel-level changes to call per-node pointer mapping. ROI questionable vs single-node binding.
 
 See NUMA_BENCHMARK_RESULTS.md and NUMA_REPLICATION_FIX.md for details.
+## 2026-09-07: RoPE Lookup Table (sm_37 transcendental acceleration)
+
+**Problem**: K80 sm_37 sinf/cosf are 20-30 cycles each. RoPE calls sinf/cosf per frequency dimension (~64 calls/token/layer). Dominant latency.
+
+**Solution**: Precomputed sin/cos lookup table with bilinear interpolation:
+- 4096 entries × 2 tables × 4 bytes = 32KB constant memory (within sm_37's 64KB limit)
+- ~5 cycles per sin/cos via LUT+interp vs 20-30 native
+- Configurable: ROPE_LUT_SIZE, ROPE_USE_LUT defines
+- Graceful fallback to sinf/cosf if not initialized
+
+**Files**:
+- ggml/src/ggml-cuda/rope-lut.cuh (new)
+- ggml/src/ggml-cuda/rope.cu (rope_yarn uses LUT)
+- ggml/src/ggml-cuda/ggml-cuda.cu (LUT init at startup)
+- ggml/src/ggml-cuda/nccl-stagger.cuh (simplified, ncclCommSplit unavailable)
+
+**Build**: GCC 11 + CUDA 11.8, -DCMAKE_CUDA_ARCHITECTURES=37
+
+**TODO**: Test on running server - restart with new binary, measure t/s change.

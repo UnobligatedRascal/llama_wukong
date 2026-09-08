@@ -80,7 +80,9 @@ Priority order based on ROI and complexity.
 - [ ] Build and run with GDN-containing model
 - [ ] Compare output against CPU reference (bit-verify correctness)
 
-## Task 4: Zero-Copy N-Gram Table (P1, 1-2 weeks)
+## Task 4: Zero-Copy N-Gram Table (DEFERRED - FUTURE WORK)
+
+> Moved to future project. Qwen4-exp architecture work (including 51B N-gram engram table, GDN/QSA scheduling, hyper-connection tensors) will be handled in a separate codebase. llama_wukong now focuses on NOUGHT hardware optimization for existing model architectures.
 
 ### 4.1 Host Allocation
 - [ ] cudaHostAlloc for 51B N-gram table (page-locked)
@@ -99,7 +101,9 @@ Priority order based on ROI and complexity.
 - [ ] Profile PCIe bandwidth usage
 - [ ] Verify lookup correctness against full VRAM baseline
 
-## Task 5: MoE Expert Batching (P2, 1-2 weeks)
+## Task 5: MoE Expert Batching (DEFERRED - FUTURE WORK)
+
+> Moved to future project. 512-expert ultra-sparse MoE batching is Qwen4-exp specific. Deferred to separate project handling that architecture.
 
 ### 5.1 Routing Sort
 - [ ] Modify topk-moe.cu output to include sorted expert indices
@@ -165,3 +169,4 @@ make -j36 llama-server llama-bench
 - Test all changes with scripts, not interactive sessions
 - Commit after each completed task
 - Profile before and after each optimization
+- 2026-09-05: Tasks 4 & 5 deferred to future project. Qwen4-exp architecture work (N-gram engram, 512-expert MoE, GDN/QSA, hyper-connection tensors) moved out of scope. llama_wukong now focuses on NOUGHT hardware optimization (NUMA, async pipeline, Kepler kernels, cuBLAS tuning) for existing model architectures.
