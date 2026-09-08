@@ -430,7 +430,14 @@ extern "C" {
         GGML_TYPE_NVFP4   = 40, // NVFP4 (4 blocks, E4M3 scale)
         GGML_TYPE_Q1_0    = 41,
         GGML_TYPE_Q2_0    = 42,
-        GGML_TYPE_COUNT   = 43,
+        // TurboQuant KV cache compression (PolarQuant with WHT rotation)
+        // See: arXiv 2504.19874 (ICLR 2026)
+        // sm_37 compatible: FP32 kernels, no tensor cores required
+        // UnobligatedRascal: ported for K80 cluster
+        GGML_TYPE_TURBO3_0 = 43, // 3-bit PolarQuant KV cache (4.6x compression)
+        GGML_TYPE_TURBO4_0 = 44, // 4-bit PolarQuant KV cache (3.8x compression)
+        GGML_TYPE_TURBO2_0 = 45, // 2-bit PolarQuant KV cache (6.4x compression)
+        GGML_TYPE_COUNT   = 46,
     };
 
     // precision

@@ -1,0 +1,46 @@
+static void ggml_backend_cuda_comm_init_nccl(ggml_backend_cuda_comm_context * ret) {
+#ifdef GGML_USE_NCCL
+    // Disabling NCCL path when CUDA virtual devices are in use since NCCL requires one distinct physical GPU per rank.
+    const ggml_cuda_device_info & info = ggml_cuda_info();
+    if (info.device_count > info.physical_device_count) {
+        GGML_LOG_WARN("NCCL disabled: virtual devices in use; "
+                      "falling back to internal AllReduce\n");
+        ggml_backend_cuda_comm_init_internal(ret);
+        return;
+    }
+
+    // Initialize NUMA-aware NCCL environment variables
+    ggml_cuda_nccl_init_env();
+
+    const size_t n = ret->dev_ids.size();
+    ret->comms.resize(n);
+    ncclResult_t rc = ncclCommInitAll(ret->comms.data(), (int) n, ret->dev_ids.data());
+    if (rc != ncclSuccess) {
+        ret->comms.clear();
+        GGML_LOG_WARN("NCCL init failed (%s); falling back to internal AllReduce\n",
+                      ncclGetErrorString(rc));
+        ggml_backend_cuda_comm_init_internal(ret);
+        return;
+    }
+
+    // Create NUMA-aware sub-communicators for staggered allreduce
+    ggml_cuda_nccl_init_numa_comms(ret->comms, ret->dev_ids, ret->numa_comms);
+
+    // Pin NCCL worker threads to NUMA-local cores
+    // NCCL spawns threads internally; we pin the current thread per-device
+    // to establish NUMA affinity for the process-wide NCCL thread pool.
+    for (size_t i = 0; i < n; i++) {
+        ggml_cuda_set_device(ret->dev_ids[i]);
+        ggml_cuda_numa_pin_thread_for_gpu(ret->dev_ids[i], (int)i);
+    }
+
+    ret->try_allreduce = ggml_backend_cuda_comm_try_allreduce_nccl;
+#else // GGML_USE_NCCL
+#ifndef GGML_USE_HIP
+    GGML_LOG_WARN("NCCL not compiled in; falling back to internal AllReduce.  "
+                  "Recompile with -DGGML_CUDA_NCCL=ON for best multi-GPU performance.\n");
+#endif // !GGML_USE_HIP
+#endif // GGML_USE_NCCL
+
+    ggml_backend_cuda_comm_init_internal(ret);
+}

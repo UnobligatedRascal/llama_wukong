@@ -1,0 +1,10 @@
+ggml_cuda_init: found 8 CUDA devices (Total VRAM: 91530 MiB):
+  Device 0: Tesla K80, compute capability 3.7, VMM: yes, VRAM: 11441 MiB
+  Device 1: Tesla K80, compute capability 3.7, VMM: yes, VRAM: 11441 MiB
+  Device 2: Tesla K80, compute capability 3.7, VMM: yes, VRAM: 11441 MiB
+  Device 3: Tesla K80, compute capability 3.7, VMM: yes, VRAM: 11441 MiB
+  Device 4: Tesla K80, compute capability 3.7, VMM: yes, VRAM: 11441 MiB
+  Device 5: Tesla K80, compute capability 3.7, VMM: yes, VRAM: 11441 MiB
+  Device 6: Tesla K80, compute capability 3.7, VMM: yes, VRAM: 11441 MiB
+  Device 7: Tesla K80, compute capability 3.7, VMM: yes, VRAM: 11441 MiB
+NCCL: set NCCL_P2P_LEVEL=1 (PCIe P2P only, no SYS crossing)

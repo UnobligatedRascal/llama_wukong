@@ -35,48 +35,144 @@ Priority order based on ROI and complexity.
 - [x] Benchmark vs baseline (same model, same config)
 - [x] Result: numa_mirror=61.0 TPS matches numactl_node0=61.4 TPS (was 24.6 TPS broken)
 
-## Task 2: Async Multi-GPU Pipeline (P1, 2-3 weeks)
+## Task 2: TurboQuant Integration (P0, 2-4 weeks)
 
-### 2.1 Per-Card Stream Pairs
+**References:**
+- TheTom/turboquant_plus (research: Python reference impl)
+- atomicmilkshake/llama-cpp-turboquant (llama.cpp fork with CUDA kernels)
+
+**Local clones:** `/home/whistler/turboquant_plus` and `/home/whistler/llama-cpp-turboquant`
+
+**K80 note:** Fork targets Turing+ (sm_75+); need sm_37 FP32 fallback audit. See RESEARCH/TURBOQUANT_TRIATTENTION_RESEARCH.md
+
+### 2.1 Research & Compatibility Audit
+- [x] Clone and review TurboQuant repo
+- [x] Identify integration points with ggml quantization backend
+- [x] Assess compatibility with current GGUF format and K80 sm_37 target
+- [x] Evaluate speed/accuracy tradeoffs vs current quant methods
+- [x] **AUDIT COMPLETE:** All kernels are FP32, no tensor cores, no sm_75+ intrinsics. Fully sm_37 compatible.
+- [x] See RESEARCH/TURBOQUANT_SM37_AUDIT.md for details
+
+### 2.2 Backend Integration
+- [ ] Add TurboQuant as selectable quant backend (-DGGML_TURBOQUANT=ON)
+- [ ] Implement convert-to-TurboQuant path in model loading
+- [ ] Wire into ggml backend buffer alloc for quantized weights
+
+### 2.3 Dequantization Kernels
+- [ ] Write or adapt TurboQuant dequant kernels for sm_37
+- [ ] Ensure MMQ/cuBLAS compatibility with TurboQuant format
+- [ ] Optimize for Kepler register/shared-memory constraints
+
+### 2.4 Verification
+- [ ] Convert test models to TurboQuant, run llama-bench
+- [ ] Compare accuracy vs baseline quantization
+- [ ] Compare inference speed and memory usage
+- [ ] Document in RESEARCH/TURBOQUANT_EVAL.md
+
+## Task 3: TriAttention Efficient Context Pruning (P1, 2-3 weeks)
+
+**References:**
+- domvox/triattention-ggml (standalone HIP/ROCm implementation)
+- atomicmilkshake/llama-cpp-turboquant (has CUDA triattention-score.cu integrated)
+
+**Local clone:** `/home/whistler/triattention-ggml`
+
+**K80 note:** GPU kernel should work on sm_37 (no tensor cores needed). See RESEARCH/TURBOQUANT_TRIATTENTION_RESEARCH.md
+
+### 3.1 Research & Design
+- [ ] Clone and review TriAttention implementation
+- [ ] Understand pruning mechanism and attention recomputation strategy
+- [ ] Assess fit for long-context workloads on NOUGHT hardware
+- [ ] Map integration points in llama.cpp attention path
+
+### 3.2 Kernel Implementation
+- [ ] Implement TriAttention pruning pass after standard attention
+- [ ] Adapt for ggml tensor format and current attention ops
+- [ ] Handle multi-GPU tensor-split compatibility
+
+### 3.3 Context Window Integration
+- [ ] Wire into llama_batch processing for long context (>8K tokens)
+- [ ] Add config flags (--triattention, --prune-threshold, etc.)
+- [ ] Ensure backward compatibility (disabled by default)
+
+### 3.4 Verification
+- [ ] Test on long-context prompts, compare quality vs full attention
+- [ ] Benchmark memory savings and latency improvement
+- [ ] Verify correctness on known attention-sensitive tasks
+- [ ] Document in RESEARCH/TRIATTENTION_EVAL.md
+
+## Task 4: FlashAttention / SlidingWindowAttention for NOUGHT (P1, 1-3 weeks)
+
+**Reference:** Existing FA in llama_wukong (`ggml/src/ggml-cuda/fattn*.cu`), FAIR FA3 patterns
+
+**K80 status:** FA tile/vec kernels should work on sm_37 (no tensor cores needed); need to verify compilation and runtime. No dedicated SWA yet — implement via attention masks first. See RESEARCH/TURBOQUANT_TRIATTENTION_RESEARCH.md
+
+### 4.1 Feasibility Assessment
+- [ ] Review current FlashAttention support in ggml-cuda (ggml-cuda/flash-attn path)
+- [ ] Test existing FA implementation on NOUGHT (sm_37, 8x K80)
+- [ ] Identify blockers: sm_80+ requirements, warp-level primitives, shared mem limits
+
+### 4.2 Sliding Window Attention (SWA)
+- [ ] Implement SWA as fallback if full FA incompatible:
+  - Local window (e.g., 4096 tokens) with full attention
+  - Global tokens (every Nth or selected) for long-range
+- [ ] Wire into ggml-cuda attention kernels
+
+### 4.3 Optimized FA Path (if viable)
+- [ ] If FA works but suboptimal: tune tiling/block sizes for GK210
+- [ ] Reduce register pressure, adapt to Kepler shared-mem limits
+- [ ] If FA fully incompatible: document why, use SWA as primary
+
+### 4.4 Verification
+- [ ] Benchmark FA/SWA vs current attention on NOUGHT
+- [ ] Compare quality on long-context tasks
+- [ ] Measure memory bandwidth improvement
+- [ ] Document in RESEARCH/FLASHATTENTION_NOUGHT.md
+
+## Task 5: Async Multi-GPU Pipeline (P3, 2-3 weeks)
+
+*Deprioritized from P1; revisit after Tasks 2-4 complete.*
+
+### 5.1 Per-Card Stream Pairs
 - [ ] For each K80 card, create 2 CUDA streams:
   - Stream A: compute (kernel launches)
   - Stream B: prefetch (cudaMemcpyAsync for next layer)
 - [ ] Track streams per GPU device in ggml_cuda_context
 
-### 2.2 Event-Based Synchronization
+### 5.2 Event-Based Synchronization
 - [ ] Record cudaEvent after each layer compute completes
 - [ ] Prefetch stream waits on event before starting transfer
 - [ ] Compute stream starts when previous layer's data ready
 
-### 2.3 K80 Dual-Core Pipeline
+### 5.3 K80 Dual-Core Pipeline
 - [ ] Exploit PLX switch: Chip 0 computes while Chip 1 pre-fetches
 - [ ] Use cudaMemcpyAsync between chip memories (via unified addressing)
 
-### 2.4 8-GPU Layer Distribution
+### 5.4 8-GPU Layer Distribution
 - [ ] Verify current tensor-split distributes layers evenly
 - [ ] Add event barriers at tensor boundaries between GPUs
 
-### 2.5 Verification
+### 5.5 Verification
 - [ ] Profile with Nsight Systems: verify compute/transfer overlap
 - [ ] Compare latency with and without async pipeline
 
-## Task 3: GDN Kernel sm_37 Verification (P1, 1-2 weeks)
+## Task 6: GDN Kernel sm_37 Verification (P2, 1-2 weeks)
 
-### 3.1 Audit gated_delta_net.cu
+### 6.1 Audit gated_delta_net.cu
 - [ ] Check for sm_80+ specific instructions (WMMA, async copy)
 - [ ] Verify shared memory usage fits Kepler limits (48KB per block max)
 - [ ] Ensure no BF16/TF32 paths are active
 
-### 3.2 Register Pressure Analysis
+### 6.2 Register Pressure Analysis
 - [ ] Calculate register usage per thread for GDN step
 - [ ] Target: < 63 registers/thread for 100% occupancy on GK210
 - [ ] Use __launch_bounds__ to control occupancy
 
-### 3.3 Shared Memory Optimization
+### 6.3 Shared Memory Optimization
 - [ ] Pin recurrent state matrix S in shared memory per block
 - [ ] Use __shared__ array, load once, update in-place each step
 
-### 3.4 Verification
+### 6.4 Verification
 - [ ] Build and run with GDN-containing model
 - [ ] Compare output against CPU reference (bit-verify correctness)
 
@@ -84,20 +180,20 @@ Priority order based on ROI and complexity.
 
 > Moved to future project. Qwen4-exp architecture work (including 51B N-gram engram table, GDN/QSA scheduling, hyper-connection tensors) will be handled in a separate codebase. llama_wukong now focuses on NOUGHT hardware optimization for existing model architectures.
 
-### 4.1 Host Allocation
+### 7.1 Host Allocation
 - [ ] cudaHostAlloc for 51B N-gram table (page-locked)
 - [ ] Map from GGUF file via mmap first, then pin needed regions
 
-### 4.2 Prefetch Strategy
+### 7.2 Prefetch Strategy
 - [ ] cudaMemPrefetchAsync for bigram/trigram hash regions
 - [ ] Prefetch ahead: predict needed regions from current token sequence
 
-### 4.3 Lookup Kernel
+### 7.3 Lookup Kernel
 - [ ] New kernel: engram_lookup(hash, table_ptr, out_vector)
 - [ ] Streams vector from host memory over PCIe on-demand
 - [ ] Only activate on bigram/trigram match tokens
 
-### 4.4 Verification
+### 7.4 Verification
 - [ ] Profile PCIe bandwidth usage
 - [ ] Verify lookup correctness against full VRAM baseline
 
@@ -105,31 +201,31 @@ Priority order based on ROI and complexity.
 
 > Moved to future project. 512-expert ultra-sparse MoE batching is Qwen4-exp specific. Deferred to separate project handling that architecture.
 
-### 5.1 Routing Sort
+### 8.1 Routing Sort
 - [ ] Modify topk-moe.cu output to include sorted expert indices
 - [ ] Group tokens by target expert (top-10 of 512 per token)
 
-### 5.2 Batch Dispatch Kernel
+### 8.2 Batch Dispatch Kernel
 - [ ] New kernel: expert_batch(expert_id, token_indices, weights)
 - [ ] Stream expert weights once, process all tokens for that expert
 - [ ] Release weights, move to next expert
 
-### 5.3 Verification
+### 8.3 Verification
 - [ ] Compare against unbatched MoE (same results, faster)
 - [ ] Measure weight load reduction
 
-## Task 6: cuBLAS vs MMQ Benchmarking (P2, 3-5 days)
+## Task 9: cuBLAS vs MMQ Benchmarking (P2, 3-5 days)
 
-### 6.1 Baseline
+### 9.1 Baseline
 - [ ] Run current config (MMQ path) with llama-bench
 - [ ] Record tokens/s, latency, memory bandwidth
 
-### 6.2 cuBLAS F32
+### 9.2 cuBLAS F32
 - [ ] Rebuild with -DGGML_CUDA_FORCE_CUBLAS=ON
 - [ ] Run same benchmark
 - [ ] Compare results
 
-### 6.3 Analysis
+### 9.3 Analysis
 - [ ] Determine winner for Kepler sm_37
 - [ ] Document findings in RESEARCH/CUBLAS_VS_MMQ.md
 

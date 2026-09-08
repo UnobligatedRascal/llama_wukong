@@ -269,6 +269,52 @@ typedef struct {
 static_assert(sizeof(block_q8_1) == 2*sizeof(ggml_half) + QK8_1, "wrong q8_1 block size/padding");
 
 //
+// TurboQuant KV cache compression (PolarQuant with WHT rotation)
+// See: arXiv 2504.19874 (ICLR 2026)
+// Ported by UnobligatedRascal for K80 sm_37 cluster
+// sm_37 compatible: FP32 kernels, no tensor cores required
+//
+
+// TurboQuant 3-bit: 3-bit PolarQuant indices
+// Block size = 128 (one block per rotation group = head_dim)
+// Per block: norm(fp16) + 2-bit indices (32 bytes) + 1-bit extra (16 bytes) = 50 bytes per 128 values
+// = 3.125 bits/value → 5.1× compression vs fp16
+#define QK_TURBO3 128
+#define QK_TURBO3_GROUP 128
+typedef struct {
+    ggml_half  norm;                    // 2 bytes: vector L2 norm
+    uint8_t    qs[QK_TURBO3 / 4];      // 32 bytes: lower 2-bit indices (4 per byte)
+    uint8_t    signs[QK_TURBO3 / 8];   // 16 bytes: upper 1-bit of 3-bit index (8 per byte)
+} block_turbo3_0;
+static_assert(sizeof(block_turbo3_0) == sizeof(ggml_half) + QK_TURBO3/4 + QK_TURBO3/8, "wrong turbo3_0 block size");
+
+// TurboQuant 4-bit: 3-bit PolarQuant + 1-bit QJL signs (legacy format)
+// Block size = 128
+// Per block: norm(fp16) + rnorm(fp16) + 3-bit indices (48 bytes) + QJL signs (16 bytes) = 68 bytes
+// = 4.25 bits/value → 3.8× compression vs fp16
+#define QK_TURBO4 128
+#define QK_TURBO4_GROUP 128
+typedef struct {
+    ggml_half  norm;                    // 2 bytes: vector L2 norm
+    ggml_half  rnorm;                   // 2 bytes: residual norm for QJL scale
+    uint8_t    qs[QK_TURBO4 * 3 / 8];  // 48 bytes: 3-bit PolarQuant indices
+    uint8_t    signs[QK_TURBO4 / 8];   // 16 bytes: 1-bit QJL signs
+} block_turbo4_0;
+static_assert(sizeof(block_turbo4_0) == 68, "wrong turbo4_0 block size");
+
+// TurboQuant 2-bit: 2-bit PolarQuant indices only
+// Block size = 128
+// Per block: norm(fp16) + 2-bit indices (32 bytes) = 34 bytes per 128 values
+// = 2.125 bits/value → 7.5× compression vs fp16
+#define QK_TURBO2 128
+#define QK_TURBO2_GROUP 128
+typedef struct {
+    ggml_half  norm;                    // 2 bytes: corrected L2 norm
+    uint8_t    qs[QK_TURBO2 / 4];      // 32 bytes: 2-bit indices (4 per byte)
+} block_turbo2_0;
+static_assert(sizeof(block_turbo2_0) == sizeof(ggml_half) + QK_TURBO2/4, "wrong turbo2_0 block size");
+
+//
 // Ternary quantization
 //
 
