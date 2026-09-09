@@ -21,9 +21,11 @@ namespace rope_lut {
 constexpr int LUT_SIZE = ROPE_LUT_SIZE;
 constexpr int LUT_MASK = ROPE_LUT_MASK;
 
-// Constant memory tables (one per GPU, shared by all blocks)
-__constant__ float lut_sin[LUT_SIZE];
-__constant__ float lut_cos[LUT_SIZE];
+// Device memory tables (one per GPU, shared by all blocks)
+// NOTE: sm_37 (Kepler) does NOT support device-side writes to __constant__ memory.
+// Using __device__ (global) memory instead; cached by L1/L2 on all architectures.
+__device__ float lut_sin[LUT_SIZE];
+__device__ float lut_cos[LUT_SIZE];
 
 // Initialization flag
 __device__ volatile bool lut_initialized = false;
@@ -39,14 +41,21 @@ static __global__ void init_rope_lut_kernel() {
             lut_sin[i] = sinf(angle);
             lut_cos[i] = cosf(angle);
         }
+        // Memory fence to ensure all writes are visible before setting flag
+        __threadfence();
         lut_initialized = true;
     }
-    __syncthreads();
 }
 
 // Host-side initialization wrapper
 inline void init_rope_lut(cudaStream_t stream = 0) {
     init_rope_lut_kernel<<<1, 1, 0, stream>>>();
+    // Synchronize to ensure LUT is ready before any kernel uses it
+    cudaError_t err = cudaStreamSynchronize(stream);
+    if (err != cudaSuccess) {
+        fprintf(stderr, "rope_lut::init_rope_lut: cudaStreamSynchronize failed: %s\n",
+                cudaGetErrorString(err));
+    }
 }
 
 // Normalize angle to [0, 2*pi) using integer arithmetic
