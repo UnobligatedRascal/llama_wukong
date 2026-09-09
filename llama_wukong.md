@@ -353,6 +353,30 @@ See NUMA_BENCHMARK_RESULTS.md and NUMA_REPLICATION_FIX.md for details.
 - Build succeeds with all turbo symbols resolved
 - Blocked on runtime testing: all GPUs in production use
 
+## 2026-09-09: FA + turbo3_0 V cache + tensor-split Fix
+
+**Issue:** Flash attention with turbo3_0 V cache and tensor-split failed with:
+```
+non-contiguous split tensor not supported in meta backend get_tensor
+```
+
+**Root cause:** FA output with turbo3_0 V cache is transposed, creating non-contiguous
+tensors. When split across GPUs, the meta backend's stride scaling in init_tensor
+produced invalid/aliased strides for views, causing get_tensor to fail.
+
+**Fix:** Added `ggml_cont()` after FA output (before reshape to 2D) when output is
+non-contiguous. The cont operation is a no-op for contiguous FA output (standard
+case), zero overhead. When turbo3_0/turbo4_0 V cache creates non-contiguous FA
+output, cont ensures correct split tensor layouts.
+
+**Files:**
+- src/llama-graph.cpp: cont check after FA output, before reshape
+- ggml/src/ggml-backend-meta.cpp: updated error message (issue now handled upstream)
+
+**Commit:** 5970fe28a
+
+**Result:** `-fa on --cache-type-v turbo3_0 --tensor-split` now works correctly.
+
 ## 2026-09-08: TriAttention GPU Kernels Complete
 
 **Status:** GPU scoring path complete. CPU glue code and CLI integration pending.
