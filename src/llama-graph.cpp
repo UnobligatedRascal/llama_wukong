@@ -2596,6 +2596,12 @@ ggml_tensor * llm_graph_context::build_attn_mha(
 #endif
         }
 
+        // Make FA output contiguous before reshape to avoid non-contiguous split tensors
+        // when using turbo3_0/turbo4_0 V cache with tensor-split. The meta backend's stride
+        // scaling produces invalid/aliased strides for non-contiguous split tensors.
+        if (!ggml_is_contiguous(cur)) {
+            cur = ggml_cont(ctx0, cur);
+        }
         cur = ggml_reshape_2d(ctx0, cur, cur->ne[0]*cur->ne[1], cur->ne[2]*cur->ne[3]);
     } else {
         ggml_tensor * kq = ggml_mul_mat(ctx0, k, q);

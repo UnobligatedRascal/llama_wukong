@@ -1553,14 +1553,14 @@ static void ggml_backend_meta_buffer_set_tensor(ggml_backend_buffer_t buffer, gg
 static void ggml_backend_meta_buffer_get_tensor(ggml_backend_buffer_t buffer, const ggml_tensor * tensor, void * data, size_t offset, size_t size) {
     const size_t n_bufs = ggml_backend_meta_buffer_n_bufs(buffer);
     const ggml_backend_meta_split_state split_state = ggml_backend_meta_get_split_state(tensor, /*assume_sync =*/ false);
-    // Non-contiguous split tensors (e.g., transposed FA output with turbo3_0 V cache)
-    // are not fully supported by the meta backend's get_tensor. The simple tensor
-    // strides become invalid after stride scaling in init_tensor for split dimensions.
-    // Workaround: use q4_0 for V cache with FA + tensor-split, or disable FA.
+    // Non-contiguous split tensors are not fully supported by the meta backend's get_tensor.
+    // The simple tensor strides become invalid after stride scaling in init_tensor for split
+    // dimensions. FA output is now made contiguous upstream in llama-graph.cpp before reshape.
+    // If this triggers, a new code path needs the same fix.
     if (!ggml_is_contiguous(tensor) && split_state.axis >= 0 && split_state.axis < GGML_MAX_DIMS
             && split_state.axis != GGML_BACKEND_SPLIT_AXIS_MIRRORED) {
         GGML_ABORT("non-contiguous split tensor not supported in meta backend get_tensor. "
-                   "Use --cache-type-v q4_0 with -fa on --tensor-split, or disable FA.");
+                   "A tensor was not made contiguous before splitting. Check the graph builder.");
     }
 
     if (split_state.n_segments != 1 || split_state.nr[0] != 1) {
