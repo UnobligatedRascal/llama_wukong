@@ -1365,6 +1365,14 @@ ggml_tensor * llama_kv_cache::cpy_k(ggml_context * ctx, ggml_tensor * k_cur, ggm
 
     k_cur = ggml_view_2d(ctx, k_cur, n_embd_gqa, n_tokens, k_cur->nb[2], 0);
 
+    // Make k_cur contiguous before SET_ROWS to avoid non-contiguous split tensors
+    // when using turbo3_0/turbo4_0 K cache with tensor-split. The meta backend's stride
+    // scaling produces invalid/aliased strides for non-contiguous split tensors.
+    // Same fix pattern as FA output in llama-graph.cpp:2600-2612.
+    if (!ggml_is_contiguous(k_cur)) {
+        k_cur = ggml_cont(ctx, k_cur);
+    }
+
     const int64_t n_stream = k->ne[2];
 
     if (n_stream > 1) {
@@ -1402,6 +1410,14 @@ ggml_tensor * llama_kv_cache::cpy_v(ggml_context * ctx, ggml_tensor * v_cur, ggm
     // take this branch when FA is enabled (the V cache is not transposed)
     if (!v_trans) {
         v_cur = ggml_view_2d(ctx, v_cur, n_embd_gqa, n_tokens, v_cur->nb[2], 0);
+
+        // Make v_cur contiguous before SET_ROWS to avoid non-contiguous split tensors
+        // when using turbo3_0/turbo4_0 V cache with tensor-split. The meta backend's stride
+        // scaling produces invalid/aliased strides for non-contiguous split tensors.
+        // Same fix pattern as FA output in llama-graph.cpp:2600-2612.
+        if (!ggml_is_contiguous(v_cur)) {
+            v_cur = ggml_cont(ctx, v_cur);
+        }
 
         if (n_stream > 1) {
             const int64_t kv_size = get_size();
