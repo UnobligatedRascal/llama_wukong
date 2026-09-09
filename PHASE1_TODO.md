@@ -63,6 +63,9 @@ Priority order based on ROI and complexity.
 - [x] Add turbo types to llama-bench.cpp type parser
 - [x] Standardize turbo4_0 as 4-bit PolarQuant (no QJL, 68-byte block)
 - [x] Verified: CLI accepts turbo2_0/turbo3_0/turbo4_0; symbols exported from libggml-cuda.so
+- [x] Fix meta backend split state for turbo types with tensor-split (commit 3709ed8)
+  - KV cache SET_ROWS: make k_cur/v_cur contiguous before write
+  - handle_mul_mat: add axis=0 + MIRRORED case for tensor-parallel matmul
 - [ ] CPU set_rows support for turbo types (blocked - CPU path not needed for GPU KV cache)
 
 ### 2.3 Dequantization Kernels
