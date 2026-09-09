@@ -12,6 +12,8 @@
 #include "llama-ext.h"
 #include "llama-sampler.h"
 #include "llama.h"
+#include "llama-kv-cache.h"
+#include "llama-triattention.h"
 
 #include <cinttypes>
 #include <cmath>
@@ -4308,4 +4310,57 @@ llama_memory_breakdown llama_get_memory_breakdown(const struct llama_context * c
 
 llama_context * llama_get_ctx_other(struct llama_context * ctx) {
     return ctx->get_cparams().ctx_other;
+}
+
+//
+// TriAttention API
+//
+
+int llama_kv_cache_init_triattention(
+        struct llama_context * ctx,
+        const char *           stats_path,
+        uint32_t               budget,
+        uint32_t               divide_length,
+        uint32_t               offset_max,
+        int                    mode,
+        int                    trigger,
+        int                    agg,
+        int                    seed,
+        bool                   normalize_scores,
+        bool                   protect_prefill,
+        bool                   disable_mlr,
+        bool                   disable_trig,
+        bool                   enable_logging) {
+    if (!ctx || !stats_path || stats_path[0] == '\0') {
+        return -1;
+    }
+
+    auto * mem = ctx->get_memory();
+    if (!mem) {
+        LLAMA_LOG_ERROR("%s: context has no memory\n", __func__);
+        return -1;
+    }
+
+    auto * kv = dynamic_cast<llama_kv_cache *>(mem);
+    if (!kv) {
+        LLAMA_LOG_ERROR("%s: memory is not a KV cache (recurrent models not supported)\n", __func__);
+        return -1;
+    }
+
+    triattention_config cfg = {};
+    cfg.budget           = budget;
+    cfg.divide_length    = divide_length;
+    cfg.offset_max       = offset_max;
+    cfg.mode             = (triattention_mode)mode;
+    cfg.trigger          = (triattention_trigger)trigger;
+    cfg.agg              = (triattention_agg)agg;
+    cfg.seed             = seed;
+    cfg.normalize_scores = normalize_scores;
+    cfg.protect_prefill  = protect_prefill;
+    cfg.disable_mlr      = disable_mlr;
+    cfg.disable_trig     = disable_trig;
+    cfg.enable_logging   = enable_logging;
+
+    kv->init_triattention(stats_path, &cfg);
+    return kv->has_triattention() ? 0 : -1;
 }

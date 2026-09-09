@@ -587,6 +587,21 @@ struct common_params {
     ggml_type cache_type_k = GGML_TYPE_F16; // KV cache data type for the K
     ggml_type cache_type_v = GGML_TYPE_F16; // KV cache data type for the V
 
+    // TriAttention: Trigonometric KV Cache Eviction
+    std::string triattention_stats;                // path to .triattention calibration file
+    int32_t     triattention_budget       = 2048;  // max KV entries to retain after pruning
+    int32_t     triattention_window       = 128;   // pruning interval (divide_length) in tokens
+    int32_t     triattention_offset_max   = 65536; // max geometric offset for scoring
+    int32_t     triattention_mode         = 0;     // 0=global, 1=per-kv-head, 2=per-layer-head
+    int32_t     triattention_trigger      = 0;     // 0=interval, 1=slack
+    int32_t     triattention_agg          = 0;     // 0=mean, 1=max
+    int32_t     triattention_seed         = 0;     // RNG seed for tie-breaking (-1 to disable)
+    bool        triattention_normalize    = false;  // z-score normalize per head
+    bool        triattention_protect_prefill = true; // never evict prompt tokens
+    bool        triattention_disable_mlr  = false;  // ablation: disable MLR weighting
+    bool        triattention_disable_trig = false;  // ablation: norm-only scoring
+    bool        triattention_log          = false;  // log pruning events to stderr
+
     common_conversation_mode conversation_mode = COMMON_CONVERSATION_MODE_AUTO;
 
     // multimodal models (see tools/mtmd)

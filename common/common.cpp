@@ -6,6 +6,7 @@
 #include "fit.h"
 #include "log.h"
 #include "llama.h"
+#include "../src/llama-ext.h"
 #include "sampling.h"
 #include "speculative.h"
 #include "unicode.h"
@@ -1402,6 +1403,29 @@ common_init_result::common_init_result(common_params & params, bool model_only) 
     }
 
     pimpl->context.reset(lctx);
+
+    // Initialize TriAttention if calibration file is provided
+    if (!params.triattention_stats.empty()) {
+        int ret = llama_kv_cache_init_triattention(
+            lctx,
+            params.triattention_stats.c_str(),
+            (uint32_t)params.triattention_budget,
+            (uint32_t)params.triattention_window,
+            (uint32_t)params.triattention_offset_max,
+            params.triattention_mode,
+            params.triattention_trigger,
+            params.triattention_agg,
+            params.triattention_seed,
+            params.triattention_normalize,
+            params.triattention_protect_prefill,
+            params.triattention_disable_mlr,
+            params.triattention_disable_trig,
+            params.triattention_log);
+
+        if (ret != 0) {
+            COM_ERR("%s", "failed to initialize TriAttention");
+        }
+    }
 
     set_process_priority(params.cpuparams.priority);
 

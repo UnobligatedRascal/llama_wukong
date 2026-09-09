@@ -24,6 +24,7 @@ add_library(llama
             llama-io.cpp
             llama-kv-cache.cpp
             llama-kv-cache-iswa.cpp
+            llama-triattention.cpp
             llama-kv-cache-dsa.cpp
             llama-kv-cache-dsa-iswa.cpp
             llama-kv-cache-msa.cpp

@@ -1,5 +1,6 @@
 #include "llama-kv-cache.h"
 
+#include "llama-triattention.h"
 #include "llama-impl.h"
 #include "llama-io.h"
 #include "llama-model.h"
@@ -378,6 +379,11 @@ void llama_kv_cache::clear(bool data) {
             ggml_backend_buffer_clear(buf.get(), 0);
         }
     }
+
+    // Reset TriAttention state
+    if (triattention_st) {
+        triattention_on_reset(triattention_st);
+    }
 }
 
 bool llama_kv_cache::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos p1) {
@@ -430,6 +436,10 @@ bool llama_kv_cache::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos p1) {
             for (uint32_t i = 0; i < cells.size(); ++i) {
                 if (!cells.pos_in(i, p0, p1)) {
                     continue;
+                }
+
+                if (triattention_st) {
+                    triattention_on_cell_removed(triattention_st, i);
                 }
 
                 cells.rm(i);
@@ -893,6 +903,18 @@ bool llama_kv_cache::update(llama_context * lctx, bool do_shift, const stream_co
         }
     }
 
+    // TriAttention pruning: check if we should prune after this update
+    if (triattention_st) {
+        uint32_t n_used = 0;
+        for (uint32_t s = 0; s < n_stream; ++s) {
+            n_used += v_cells[s].size();
+        }
+
+        if (triattention_should_prune(triattention_st, n_used)) {
+            triattention_try_prune();
+        }
+    }
+
     return updated;
 }
 
@@ -1126,10 +1148,18 @@ void llama_kv_cache::apply_ubatch(const slot_info & sinfo, const llama_ubatch & 
 
                 seq_pos_max_rm[seq_id] = std::max(seq_pos_max_rm[seq_id], pos);
 
+                if (triattention_st) {
+                    triattention_on_cell_removed(triattention_st, idx);
+                }
+
                 cells.rm(idx);
             }
 
             cells.pos_set(idx, ubatch.pos[i]);
+
+            if (triattention_st) {
+                triattention_on_token_added(triattention_st, idx, (int32_t)ubatch.pos[i]);
+            }
 
             if (ubatch.is_pos_2d() || ubatch.token || hparams.ple_n_heads > 0) {
                 llama_kv_cell_ext ext;
@@ -2825,6 +2855,87 @@ void llama_kv_cache_context::set_input_kq_mask(ggml_tensor * dst, const llama_ub
 
 void llama_kv_cache_context::set_input_pos_bucket(ggml_tensor * dst, const llama_ubatch * ubatch) const {
     kv->set_input_pos_bucket(dst, ubatch);
+}
+
+//
+// TriAttention integration methods
+//
+
+void llama_kv_cache::init_triattention(const char * stats_path, const triattention_config * cfg) {
+    if (!stats_path || stats_path[0] == '\0') {
+        return;
+    }
+    if (triattention_st) {
+        triattention_free(triattention_st);
+        triattention_st = nullptr;
+    }
+
+    const uint32_t kv_size = v_cells.empty() ? 0 : (uint32_t)v_cells[0].size();
+    const double rope_theta = (double)hparams.rope_freq_base_train;
+    const uint32_t head_dim = hparams.n_embd_head_k(0);
+    const uint32_t n_kv_heads = hparams.n_head_kv(0);
+
+    triattention_st = triattention_init(stats_path, cfg, kv_size, rope_theta, head_dim, n_kv_heads);
+    if (!triattention_st) {
+        LLAMA_LOG_ERROR("%s: failed to initialize TriAttention from %s\n", __func__, stats_path);
+    }
+}
+
+int32_t llama_kv_cache::triattention_try_prune() {
+    if (!triattention_st) {
+        return 0;
+    }
+
+    // Build K tensor array and layer map for triattention_prune_impl()
+    const uint32_t n_kv_layers = (uint32_t)layers.size();
+    std::vector<ggml_tensor *> k_tensors(n_kv_layers);
+    std::vector<int32_t> layer_map(n_kv_layers);
+
+    for (uint32_t i = 0; i < n_kv_layers; i++) {
+        k_tensors[i] = layers[i].k;
+        layer_map[i] = (int32_t)layers[i].il;
+    }
+
+    const uint32_t kv_size = (uint32_t)v_cells[0].size();
+
+    int32_t n_evicted = triattention_prune_impl(
+        triattention_st,
+        k_tensors.data(),
+        n_kv_layers,
+        layer_map.data(),
+        kv_size);
+
+    if (n_evicted > 0) {
+        // Sync cell metadata: remove cells that triattention marked as evicted
+        // (cell_positions[i] == -1 after prune means the cell was evicted)
+        auto & cells = v_cells[0];
+        auto & head  = v_heads[0];
+        uint32_t new_head = cells.size();
+
+        for (uint32_t i = 0; i < kv_size; i++) {
+            if (triattention_st->cell_positions[i] < 0 && !cells.is_empty(i)) {
+                cells.rm(i);
+                if (new_head == cells.size()) {
+                    new_head = i;
+                }
+            }
+        }
+
+        if (new_head != cells.size() && new_head < head) {
+            head = new_head;
+        }
+
+        // Note: position gaps from evicted cells are intentionally left as-is.
+        // The recent-token protection in triattention_prune_impl() ensures that
+        // the most recent divide_length tokens are never evicted, so seq_pos_max
+        // always equals the server's expected position.
+    }
+
+    return n_evicted;
+}
+
+bool llama_kv_cache::has_triattention() const {
+    return triattention_st != nullptr;
 }
 
 void llama_kv_cache_context::set_input_k_rot(ggml_tensor * dst) const {

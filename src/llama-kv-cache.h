@@ -12,6 +12,8 @@ struct llama_cparams;
 struct llama_hparams;
 struct llama_model;
 struct llama_context;
+struct triattention_config;
+struct triattention_state;
 
 //
 // llama_kv_cache
@@ -243,6 +245,16 @@ public:
     // note: used by n-gram input embeddings
     void get_prev_tokens(const llama_ubatch & ubatch, uint32_t n, std::vector<llama_token> & res) const;
 
+    //
+    // TriAttention integration
+    //
+
+    void init_triattention(const char * stats_path, const struct triattention_config * cfg);
+
+    int32_t triattention_try_prune();
+
+    bool has_triattention() const;
+
 private:
     const llama_model & model;
     const llama_hparams & hparams;
@@ -307,6 +319,9 @@ private:
 
     // pending stream copies that will be applied during the next update
     stream_copy_info sc_info;
+
+    // TriAttention state
+    struct triattention_state * triattention_st = nullptr;
 
     std::vector<kv_layer> layers;
 

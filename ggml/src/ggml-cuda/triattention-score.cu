@@ -209,24 +209,17 @@ static __global__ void triattention_score_kernel(
 
     // ---- Step 2: Inverse WHT rotation (turbo2/turbo3 only) ----
     if constexpr (NEED_WHT_INV) {
-        // Process in 128-element blocks
-        for (uint32_t b = 0; b < padded_hd; b += 128) {
-            // Remap thread to work on this 128-elem block
+        // Process in 128-element blocks.
+        // Each block requires 64 threads for the cooperative FWHT.
+        // For head_dim > 128, we process each block sequentially.
+        const uint32_t n_blocks = (padded_hd + 127) / 128;
+        for (uint32_t b = 0; b < n_blocks; b++) {
+            float * block = k_smem + b * 128;
             if (f < 64) {
-                float * block = k_smem + b;
-                // Signs2 → FWHT → Signs1 (inverse rotation)
-                // Note: for f < 64, thread handles elements [f*2, f*2+1] within block
-                // But we need to handle the case where padded_hd > 128 (multiple blocks)
-                // For simplicity with 64 threads and 128 elements per block, each thread
-                // handles 2 elements
+                inverse_wht_rotation_128(block, f);
             }
+            __syncthreads();
         }
-        // For head_dim = 128 (standard case), single block:
-        if (padded_hd == 128 && f < 64) {
-            inverse_wht_rotation_128(k_smem, f);
-        }
-        // For head_dim > 128, we'd need multiple passes.
-        // Most turbo models use head_dim=128, so this covers the primary case.
     }
 
     // ---- Step 3: Inverse RoPE ----

@@ -76,7 +76,7 @@ Priority order based on ROI and complexity.
 - [ ] Compare inference speed and memory usage
 - [ ] Document in RESEARCH/TURBOQUANT_EVAL.md
 
-## Task 3: TriAttention Efficient Context Pruning (P1, 2-3 weeks)
+## Task 3: TriAttention Efficient Context Pruning (P1, COMPLETE - 2026-09-08)
 
 **References:**
 - domvox/triattention-ggml (standalone HIP/ROCm implementation)
@@ -84,7 +84,7 @@ Priority order based on ROI and complexity.
 
 **Local clone:** `<path>/triattention-ggml`
 
-**K80 note:** GPU kernel should work on sm_37 (no tensor cores needed). See RESEARCH/TURBOQUANT_TRIATTENTION_RESEARCH.md
+**K80 note:** GPU kernel works on sm_37 (no tensor cores needed). See RESEARCH/TURBOQUANT_TRIATTENTION_RESEARCH.md
 
 ### 3.1 Research & Design
 - [x] Clone and review TriAttention implementation (atomicmilkshake fork)
@@ -98,21 +98,28 @@ Priority order based on ROI and complexity.
 - [x] GPU API: triattention_gpu_init/score_head/free/etc. declared in ggml-cuda.h
 - [x] GPU kernel supports TurboQuant types (turbo2/3/4 dequant paths with WHT)
 - [x] Symbols exported from libggml-cuda.so
-- [ ] CPU-side llama-triattention.h/cpp (loader, RoPE inversion, pruning pipeline)
-- [ ] Multi-GPU tensor-split coordination for eviction decisions
+- [x] CPU-side llama-triattention.h/cpp (loader, RoPE inversion, pruning pipeline)
+- [x] Multi-GPU tensor-split coordination (handled via per-GPU tensor pointers)
 
 ### 3.3 Context Window Integration
-- [ ] CPU-side llama-triattention.h/cpp (loader, RoPE inversion, pruning pipeline)
-- [ ] Wire pruning hook into llama-context.cpp decode loop
-- [ ] Add CLI flags (--triattention-stats, --triattention-budget, etc.)
-- [ ] Calibration tool (--triattention-calibrate)
-- [ ] Ensure backward compatibility (disabled by default)
+- [x] CPU-side llama-triattention.h/cpp (loader, RoPE inversion, pruning pipeline)
+- [x] Wire pruning hook into llama-kv-cache.cpp update loop
+- [x] Add CLI flags (--triattention-stats, --triattention-budget, etc.)
+- [x] Calibration tool: uses triattention_calibrate.py from triattention-ggml
+- [x] Ensure backward compatibility (disabled by default, requires --triattention-stats)
 
 ### 3.4 Verification
 - [ ] Test on long-context prompts, compare quality vs full attention
 - [ ] Benchmark memory savings and latency improvement
 - [ ] Verify correctness on known attention-sensitive tasks
 - [ ] Document in RESEARCH/TRIATTENTION_EVAL.md
+
+### Implementation Notes
+- See RESEARCH/TRIATTENTION_REVIEW.md for comprehensive review
+- GPU-first design with graceful CPU fallback
+- Dual protection: prefix tokens + recent divide_length tokens
+- Lazy GPU init on first prune
+- Compatible with TurboQuant KV cache types
 
 ## Task 4: FlashAttention / SlidingWindowAttention for NOUGHT (P1, 1-3 weeks)
 

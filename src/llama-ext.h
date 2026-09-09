@@ -132,3 +132,33 @@ LLAMA_API uint32_t        llama_model_target_layer_ids_n(const struct llama_mode
 // if out is nullptr, returns the number of tokens without writing to out
 // caller must allocate enough memory for out before calling
 LLAMA_API uint32_t llama_model_get_tok_embd(const struct llama_model * model, float * out);
+
+//
+// TriAttention: Trigonometric KV Cache Eviction
+//
+
+// Initialize TriAttention pruning on the KV cache.
+// stats_path: path to .triattention calibration file
+// budget: max KV entries to retain after pruning
+// divide_length: pruning interval in decode tokens
+// offset_max: max geometric offset for scoring
+// mode: 0=global, 1=per-kv-head, 2=per-layer-head
+// trigger: 0=interval, 1=slack
+// agg: 0=mean, 1=max
+// seed: RNG seed for tie-breaking (-1 to disable)
+// Returns 0 on success, -1 on failure.
+LLAMA_API int llama_kv_cache_init_triattention(
+        struct llama_context * ctx,
+        const char *           stats_path,
+        uint32_t               budget,
+        uint32_t               divide_length,
+        uint32_t               offset_max,
+        int                    mode,
+        int                    trigger,
+        int                    agg,
+        int                    seed,
+        bool                   normalize_scores,
+        bool                   protect_prefill,
+        bool                   disable_mlr,
+        bool                   disable_trig,
+        bool                   enable_logging);

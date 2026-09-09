@@ -2460,6 +2460,107 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             params.cache_type_v = kv_cache_type_from_str(value);
         }
     ).set_env("LLAMA_ARG_CACHE_TYPE_V"));
+
+    // TriAttention: Trigonometric KV Cache Eviction
+    add_opt(common_arg(
+        {"--triattention-stats"}, "PATH",
+        "path to .triattention calibration file (enables TriAttention eviction)",
+        [](common_params & params, const std::string & value) {
+            params.triattention_stats = value;
+        }
+    ));
+    add_opt(common_arg(
+        {"--triattention-budget"}, "N",
+        string_format("max KV entries to retain after pruning (default: %d)", params.triattention_budget),
+        [](common_params & params, const std::string & value) {
+            params.triattention_budget = std::stoi(value);
+        }
+    ));
+    add_opt(common_arg(
+        {"--triattention-window"}, "N",
+        string_format("pruning interval in decode tokens (default: %d)", params.triattention_window),
+        [](common_params & params, const std::string & value) {
+            params.triattention_window = std::stoi(value);
+        }
+    ));
+    add_opt(common_arg(
+        {"--triattention-offset-max"}, "N",
+        string_format("max geometric offset for scoring (default: %d)", params.triattention_offset_max),
+        [](common_params & params, const std::string & value) {
+            params.triattention_offset_max = std::stoi(value);
+        }
+    ));
+    add_opt(common_arg(
+        {"--triattention-mode"}, "MODE",
+        "pruning granularity: global, per-kv-head, per-layer-head (default: global)",
+        [](common_params & params, const std::string & value) {
+            if (value == "global")          params.triattention_mode = 0;
+            else if (value == "per-kv-head")     params.triattention_mode = 1;
+            else if (value == "per-layer-head")  params.triattention_mode = 2;
+            else throw std::invalid_argument("invalid triattention mode: " + value);
+        }
+    ));
+    add_opt(common_arg(
+        {"--triattention-trigger"}, "MODE",
+        "pruning trigger: interval, slack (default: interval)",
+        [](common_params & params, const std::string & value) {
+            if (value == "interval")    params.triattention_trigger = 0;
+            else if (value == "slack")  params.triattention_trigger = 1;
+            else throw std::invalid_argument("invalid triattention trigger: " + value);
+        }
+    ));
+    add_opt(common_arg(
+        {"--triattention-agg"}, "MODE",
+        "score aggregation: mean, max (default: mean)",
+        [](common_params & params, const std::string & value) {
+            if (value == "mean")    params.triattention_agg = 0;
+            else if (value == "max")  params.triattention_agg = 1;
+            else throw std::invalid_argument("invalid triattention aggregation: " + value);
+        }
+    ));
+    add_opt(common_arg(
+        {"--triattention-seed"}, "N",
+        string_format("RNG seed for tie-breaking noise, -1 to disable (default: %d)", params.triattention_seed),
+        [](common_params & params, const std::string & value) {
+            params.triattention_seed = std::stoi(value);
+        }
+    ));
+    add_opt(common_arg(
+        {"--triattention-normalize"},
+        "z-score normalize scores per head before selection",
+        [](common_params & params) {
+            params.triattention_normalize = true;
+        }
+    ));
+    add_opt(common_arg(
+        {"--triattention-no-protect-prefill"},
+        "allow eviction of prompt tokens (default: protected)",
+        [](common_params & params) {
+            params.triattention_protect_prefill = false;
+        }
+    ));
+    add_opt(common_arg(
+        {"--triattention-disable-mlr"},
+        "ablation: disable MLR weighting (use q_abs_mean directly)",
+        [](common_params & params) {
+            params.triattention_disable_mlr = true;
+        }
+    ));
+    add_opt(common_arg(
+        {"--triattention-disable-trig"},
+        "ablation: drop trigonometric term, norm-only scoring",
+        [](common_params & params) {
+            params.triattention_disable_trig = true;
+        }
+    ));
+    add_opt(common_arg(
+        {"--triattention-log"},
+        "log pruning events to stderr",
+        [](common_params & params) {
+            params.triattention_log = true;
+        }
+    ));
+
     add_opt(common_arg(
         {"--hellaswag"},
         "compute HellaSwag score over random tasks from datafile supplied with -f",
