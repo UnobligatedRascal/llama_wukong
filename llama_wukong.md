@@ -370,3 +370,53 @@ See NUMA_BENCHMARK_RESULTS.md and NUMA_REPLICATION_FIX.md for details.
 - Add CLI flags (--triattention-stats, --triattention-budget, etc.)
 - Calibration tool (--triattention-calibrate)
 - Multi-GPU tensor-split coordination for eviction decisions
+
+## Development Tools
+
+### code_mapper - Code Relationship Mapper
+
+Persistent indexing tool for tracing activation chains, dependencies, and cross-file connections.
+
+**Location:** `scripts/code_mapper.py` (also symlinked to `/usr/local/bin/codemapper`)
+**Database:** `~/.code_mapper/llama_wukong.db`
+
+**Indexing:** Run after major code changes:
+```bash
+python3 scripts/code_mapper.py --project-name llama_wukong index /home/whistler/llama_wukong
+```
+
+**Common queries:**
+```bash
+# Trace full activation chain for a symbol
+codemapper --project-name llama_wukong trace ggml_cuda_init
+
+# Find callers/callees (upstream/downstream)
+codemapper --project-name llama_wukong query callers ggml_backend_cuda_init
+codemapper --project-name llama_wukong query callees llama_build_graph
+
+# Map dependencies (who depends on this file / what does this file depend on)
+codemapper --project-name llama_wukong query reverse-dep ggml/include/ggml-backend.h
+codemapper --project-name llama_wukong query forward-dep src/llama.cpp
+
+# Find error/warning/assert sources
+codemapper --project-name llama_wukong query errors "CUBLAS_STATUS"
+
+# Bird's eye view of all entities related to a topic
+codemapper --project-name llama_wukong map nccl
+codemapper --project-name llama_wukong map mul_mat
+
+# CMake target details and flags
+codemapper --project-name llama_wukong query cmake ggml-cuda
+codemapper --project-name llama_wukong query cmake-uses-flag cublas
+
+# Where is something defined/used?
+codemapper --project-name llama_wukong query defines GGML_CUDA_PEER_MAX_BATCH_SIZE
+codemapper --project-name llama_wukong query uses ggml_cuda_mul_mat_cublas
+
+# Search indexed content
+codemapper --project-name llama_wukong search "GGML_CUDA_FORCE_CUBLAS"
+```
+
+**Indexed data:** includes, function definitions/calls (218K+), macros, symbols, CMake targets/options/flags (214 targets, 42K+ flags), error/warning/assert messages (11K+).
+
+Created by UnobligatedRascal.
