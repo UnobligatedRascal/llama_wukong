@@ -4,7 +4,7 @@
 
 ## What This Is
 
-llama_wukong extends llama.cpp with NOUGHT-specific optimizations for running large models efficiently on aging Kepler hardware. Focuses on existing model architectures (Qwen3.6/3.8, L3.2-MoE, etc.). Qwen4-exp architecture work deferred to a separate project.
+llama_wukong extends llama.cpp with hardware-specific optimizations for running large models efficiently on NVIDIA Kepler sm_37 GPUs (Tesla K80). Focuses on existing model architectures.
 
 **Core optimizations:**
 - NUMA-aware weight replication across dual Xeon sockets
@@ -22,13 +22,10 @@ llama_wukong extends llama.cpp with NOUGHT-specific optimizations for running la
 
 | File | Purpose |
 |------|---------|
-| TODO.md | Current task tracking (concise) |
-| PHASE1_TODO.md | Detailed implementation tasks with checkboxes |
-| TODO_PHASE4.md | TriAttention + TurboQuant deep dive |
-| llama_wukong.md | Full project history and scope |
-| ARCHITECTURE_REFERENCE.md | Original pitch: memory topology, execution pipeline, Kepler exploitation |
+| TODO.md | Master task tracker, build configs, troubleshooting |
 | VERIFIED_CONFIG.md | Working launch command and hardware profile |
 | RESEARCH/ | Technical research notes per optimization area |
+| RESEARCH/KV_CACHE_AUDIT.md | KV cache visualization & audit methodology |
 
 ## Build (NOUGHT)
 
@@ -75,7 +72,7 @@ Example:
 - **TurboQuant backend:** Fully integrated; CLI flags working; symbols exported
 - **TriAttention:** GPU scoring kernels complete; CPU/server integration pending
 - **FlashAttention/SWA on sm_37:** Pending feasibility testing
-- **Qwen4-exp architecture:** Deferred to separate project
+- **KV cache quantization verification:** In progress (auditing why f16=q8_0=q4_0 speed)
 
 Verified working: tensor-split across all 8 GK210 GPUs, -np 2–6, Qwen3.6-27B Q4_K_M at 256K context with speculative decoding.
 
