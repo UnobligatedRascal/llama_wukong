@@ -1562,8 +1562,14 @@ static void ggml_backend_meta_buffer_get_tensor(ggml_backend_buffer_t buffer, co
     // The simple tensor strides become invalid after stride scaling in init_tensor for split
     // dimensions. FA output is now made contiguous upstream in llama-graph.cpp before reshape.
     // If this triggers, a new code path needs the same fix.
+    // Non-contiguous split tensors are not fully supported by the meta backend's get_tensor.
+    // The simple tensor strides become invalid after stride scaling in init_tensor for split
+    // dimensions. FA output is now made contiguous upstream in llama-graph.cpp before reshape.
+    // If this triggers, a new code path needs the same fix.
+    // Note: nr[0]=1 means all GPUs have the same data (effectively MIRRORED), so non-contiguous
+    // is fine in that case since each GPU reads from its own identical copy.
     if (!ggml_is_contiguous(tensor) && split_state.axis >= 0 && split_state.axis < GGML_MAX_DIMS
-            && split_state.axis != GGML_BACKEND_SPLIT_AXIS_MIRRORED) {
+            && split_state.axis != GGML_BACKEND_SPLIT_AXIS_MIRRORED && split_state.nr[0] > 1) {
         GGML_ABORT("non-contiguous split tensor not supported in meta backend get_tensor. "
                    "A tensor was not made contiguous before splitting. Check the graph builder.");
     }
