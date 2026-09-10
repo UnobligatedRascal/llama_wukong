@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-09  
 **Author:** UnobligatedRascal  
-**Status:** Investigation complete, fix plan drafted  
+**Status:** Option A fix applied (2026-09-09), pending rebuild/test  
 **Priority:** P0 — blocks all KV cache quantization benefits on NOUGHT (8-GPU tensor-split)
 
 ---
@@ -249,12 +249,21 @@ llama-server -m model.gguf --split-mode tensor --tensor-split 1,1,1,1,1,1,1,1 \
 
 ## Action Items
 
-- [ ] Apply Option A fix (block size reference)
+- [x] Apply Option A fix (block size reference) — committed 2026-09-09
+  - llama_wukong: 7d7944e3b
+  - llama_lazarus: 77657e77f
 - [ ] Rebuild and test with q4_0/q8_0
 - [ ] Document results
 - [ ] If q4_0/q8_0 works: decide on turbo3_0/turbo4_0 strategy
 - [ ] If q4_0/q8_0 still broken: investigate meta backend byte layout handling
 - [ ] Consider upstreaming any fixes to ggml-org/llama.cpp
+
+## Notes
+
+- Same fix applied to both llama_wukong and llama_lazarus
+- llama_lazarus is the upstream base; llama_wukong was a cowboy branch
+- After validating this fix, should properly rebase/fork wukong from updated lazarus
+- CUDA FA type support (turbo3_0/turbo4_0) is a SEPARATE issue — not fixed here
 
 ---
 
