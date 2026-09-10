@@ -785,7 +785,12 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
     tensor_config tc = get_tensor_config();
     split_state.axis = tc.axis;
     if (split_state.axis >= 0 && split_state.axis < GGML_MAX_DIMS) {
-        const int64_t blck_size = ggml_blck_size(tc.tensor_axis_0->type);
+        // For KV cache tensors, use their own type's block size, not the reference weight tensor.
+        // Fixes misaligned quantization block boundaries when KV cache type differs from model weights.
+        // UnobligatedRascal
+        const int64_t blck_size = (std::regex_match(tensor_name, pattern_kv_cache))
+            ? ggml_blck_size(tensor->type)
+            : ggml_blck_size(tc.tensor_axis_0->type);
         const float * tensor_split = ud->model->tensor_split();
         std::vector<float> tensor_split_scan;
         tensor_split_scan.reserve(ud->n_devices);
