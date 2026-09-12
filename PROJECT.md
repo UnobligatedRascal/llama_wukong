@@ -65,9 +65,13 @@ W spec common_specu: backend offload failed for seq_id=0; using CPU sampler
 
 #### P0: Git fork hygiene
 
-- llama_wukong improperly forked — no ancestry with llama_lazarus.
-- Need: rebase lazarus onto ggml-org master (159 commits), cherry-pick ~29 wukong commits, force-push clean history.
+- llama_wukong improperly forked — no ancestry with llama_lazarus or ggml-org.
+- Current state: 10767 commits with mixed wukong/upstream history, no merge-base with lazarus.
+- ggml-org/master has 202 commits since common merge-base with lazarus; lazarus has 5.
+- Plan: Create clean fork from ggml-org/master → cherry-pick 5 lazarus commits → cherry-pick ~25 wukong commits.
+- Script: scripts/create_clean_fork.sh (creates 'clean-fork' branch, preserves current as backup).
 - Conflicts expected in: ggml-cuda.cu, ggml.h, llama-model.cpp, llama-graph.cpp, llama-kv-cache.cpp, llama-context.cpp, arg.cpp.
+- **CAUTION:** User mentioned open PR to llama.cpp reviewed by Ggerganov; force-push may break it. PR not found via GitHub API (may be from different account/branch or closed).
 
 ### Deferred / Pending
 
