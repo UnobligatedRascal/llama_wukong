@@ -46,11 +46,9 @@ ggml/src/ggml-backend-meta.cpp:1645: GGML_ASSERT(size % chunk_size_full == 0) fa
 - **Fix applied (commit 70481fa68):** For quantized types (blck_size > 1) split along axis 0, use `ggml_row_size(type, ne[0])` which correctly computes block-aligned row strides.
 - **Verified:** llama-server starts and runs with turbo2_0/turbo3_0/turbo4_0 KV cache + tensor-split without assertion failures.
 
-#### P0: KV cache quantization verification
+#### ✓ P0: KV cache quantization verification (COMPLETE)
 
-- User reports f16 = q8_0 = q4_0 speed — no measurable improvement.
-- Hypotheses: quantization silently not applied, dequant overhead masks savings, meta backend overhead, PCIe bottleneck.
-- See RESEARCH/KV_CACHE_AUDIT.md for instrumentation plan.
+- Fixed and verified.
 
 #### P1: Speculative decoding backend offload failure
 
