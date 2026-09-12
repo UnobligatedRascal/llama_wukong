@@ -13,6 +13,8 @@ Official llama.cpp fails on Kepler with:
 
 All resolved. Multi-GPU tensor parallelism works.
 
+[ggml](https://github.com/ggml-org/ggml) / [ops](https://github.com/ggml-org/llama.cpp/blob/master/docs/ops.md) / [lib llama API](https://github.com/ggml-org/llama.cpp/issues/9289) / [llama-server REST API](https://github.com/ggml-org/llama.cpp/issues/9291)
+
 ## Tested Hardware
 
 | GPU | Chip | CC | Status |
@@ -70,7 +72,7 @@ Dual K80 (2 GPUs on one card):
 ./bin/llama-server --model model.gguf -ngl 999 -c 4096 --tensor-split 1,1
 ```
 
-Multi-GPU with parallelism:
+Multi-GPU with parallelism (4+ K80s):
 
 ```bash
 ./bin/llama-server --model model.gguf -ngl 999 -c 4096 --tensor-split 1,1,1,1 -np 4
