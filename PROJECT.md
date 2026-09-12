@@ -68,10 +68,23 @@ W spec common_specu: backend offload failed for seq_id=0; using CPU sampler
 - llama_wukong improperly forked — no ancestry with llama_lazarus or ggml-org.
 - Current state: 10767 commits with mixed wukong/upstream history, no merge-base with lazarus.
 - ggml-org/master has 202 commits since common merge-base with lazarus; lazarus has 5.
-- Plan: Create clean fork from ggml-org/master → cherry-pick 5 lazarus commits → cherry-pick ~25 wukong commits.
-- Script: scripts/create_clean_fork.sh (creates 'clean-fork' branch, preserves current as backup).
-- Conflicts expected in: ggml-cuda.cu, ggml.h, llama-model.cpp, llama-graph.cpp, llama-kv-cache.cpp, llama-context.cpp, arg.cpp.
-- **CAUTION:** User mentioned open PR to llama.cpp reviewed by Ggerganov; force-push may break it. PR not found via GitHub API (may be from different account/branch or closed).
+
+**Two-phase fix:**
+
+**Phase 1 (IN PROGRESS):** Sync llama_lazarus with ggml-org
+- PR: https://github.com/UnobligatedRascal/llama_lazarus/pull/1 "Syncing from original"
+- Branch: ggml-org/llama.cpp:master → UnobligatedRascal/llama_lazarus:master
+- Stats: 58,812 additions, 12,941 deletions, 524 files
+- Status: Open, awaiting review/merge
+- Once merged: lazarus will have proper ggml-org ancestry
+
+**Phase 2 (PENDING):** Create clean llama_wukong fork
+- After PR #1 merges, fetch updated upstream (llama_lazarus)
+- Create wukong from synced lazarus + wukong-specific commits (~25)
+- Script: scripts/create_clean_fork.sh (will need update after PR #1 merges)
+- Conflicts expected in: ggml-cuda.cu, ggml.h, llama-model.cpp, llama-graph.cpp, llama-kv-cache.cpp, llama-context.cpp, arg.cpp
+
+**Current backup:** main-backup branch preserves all current work.
 
 ### Deferred / Pending
 
