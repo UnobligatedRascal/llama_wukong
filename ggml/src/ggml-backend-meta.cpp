@@ -1231,6 +1231,15 @@ static enum ggml_status ggml_backend_meta_buffer_init_tensor_impl(ggml_backend_m
                     nb[i] = tensor->nb[i] * ne[split_dim]/tensor->ne[split_dim];
                 }
             }
+            // For quantized types split along axis 0, linear stride scaling produces incorrect
+            // row strides that don't respect block alignment. This causes meta backend assertions
+            // to fail (e.g., ggml-backend-meta.cpp:1645 size % chunk_size_full == 0) when using
+            // turbo2_0/turbo3_0 KV cache with tensor-split mode.
+            // Fix: use ggml_row_size() which correctly accounts for quantization block boundaries.
+            // UnobligatedRascal
+            if (split_dim == 0 && ggml_blck_size(tensor->type) > 1) {
+                nb[1] = ggml_row_size(tensor->type, ne[0]);
+            }
         }
 
         ggml_tensor * t_ij = ggml_new_tensor(simple_ctx, tensor->type, GGML_MAX_DIMS, ne);
