@@ -63,21 +63,12 @@ W spec common_specu: backend offload failed for seq_id=0; using CPU sampler
 - **Impact:** Speculative decoding still works but loses GPU acceleration for draft token sampling.
 - **Action:** Implement or enable GPU sampler support for SPLIT_MODE_TENSOR in backend.
 
-#### P0: Git fork hygiene
+#### ✓ P0: Git fork hygiene (COMPLETE)
 
-- llama_wukong improperly forked — no ancestry with llama_lazarus or ggml-org.
-- Current state: 10767 commits with mixed wukong/upstream history, no merge-base with lazarus.
-- ggml-org/master has 202 commits since common merge-base with lazarus; lazarus has 5.
-
-**Two-phase fix:**
-
-**Phase 1 (CONFLICT RESOLVED):** Sync llama_lazarus with ggml-org
-- Original PR #1 had merge conflict in README.md (dirty state, not mergeable)
-- Resolved conflict locally, pushed clean merge branch
-- New PR: https://github.com/UnobligatedRascal/llama_lazarus/pull/2 "Sync ggml-org/master (conflict-resolved)"
-- Branch: pr-1-sync-resolved → master
-- Status: Open, mergeable=True (awaiting merge)
-- Once merged: lazarus will have proper ggml-org ancestry (202 commits synced)
+- **Phase 1:** Synced llama_lazarus with ggml-org via PR #2 (merged)
+- **Phase 2:** Created clean llama_wukong fork — 1 commit on top of synced lazarus
+- origin/main now has clean ancestry: ggml-org/master → lazarus fixes → wukong features
+- Old messy history preserved as main-backup branch
 
 **Phase 2 (PENDING):** Create clean llama_wukong fork
 - After PR #1 merges, fetch updated upstream (llama_lazarus)
