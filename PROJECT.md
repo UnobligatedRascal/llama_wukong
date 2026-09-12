@@ -3,7 +3,7 @@
 > llama.cpp fork optimized for NVIDIA Kepler sm_37 (8x Tesla K80). Base: llama_lazarus → ggml-org/llama.cpp.
 > UnobligatedRascal — Making old hardware sing.
 
-**Last updated:** 2026-09-12
+**Last updated:** 2026-09-12 (turbo2_0/turbo3_0 meta backend fix applied)
 
 ---
 
@@ -42,9 +42,9 @@ ggml/src/ggml-backend-meta.cpp:1645: GGML_ASSERT(size % chunk_size_full == 0) fa
 ```
 
 - **Trigger:** `--cache-type-v turbo2_0` or `turbo3_0` with `--split-mode tensor`
-- **Stack:** `ggml_backend_meta_buffer_get_tensor` → `ggml_backend_sched_graph_compute_async` → `llama_decode`
-- **Root cause:** turbo2_0/turbo3_0 block sizes don't align with meta backend's chunk_size_full calculation for split tensors. Option A fix (using KV cache's own block size) works for q4_0/q8_0 but turbo types have non-standard block sizes that break the axis-aligned split assumption in `ggml-backend-meta.cpp:1645`.
-- **Action:** Audit meta backend split tensor handling for non-standard block sizes; may need byte-aligned split boundaries or fallback to MIRRORED for turbo types.
+- **Root cause:** Meta backend's linear stride scaling (`nb[i] = full_nb * split_ne/full_ne`) produces incorrect row strides for quantized types split along axis 0, because it doesn't respect quantization block alignment. Turbo types (blck_size=128) with uneven splits get misaligned strides.
+- **Fix applied (commit 70481fa68):** For quantized types (blck_size > 1) split along axis 0, use `ggml_row_size(type, ne[0])` which correctly computes block-aligned row strides.
+- **Verified:** llama-server starts and runs with turbo2_0/turbo3_0/turbo4_0 KV cache + tensor-split without assertion failures.
 
 #### P0: KV cache quantization verification
 
@@ -168,6 +168,8 @@ Use: `--cache-type-k turbo4_0 --cache-type-v turbo4_0`
 ## Git History (Last 10)
 
 ```
+70481fa68 fix(meta): correct stride scaling for quantized split tensors
+1219e9e4f docs: consolidate all documentation into PROJECT.md; remove redundant files
 220da23a7 docs: consolidate TODO, add KV cache audit methodology, clean README
 7046c46a1 docs: mark Option A fix as applied in ROTA
 7d7944e3b fix: use KV cache tensor's own block size for split granularity
@@ -176,8 +178,6 @@ Use: `--cache-type-k turbo4_0 --cache-type-v turbo4_0`
 3709ed8ba Fix turbo3_0/turbo4_0 KV cache with tensor-split: meta backend split state bugs
 5970fe28a fix: make FA output contiguous before reshape for tensor-split + turbo3_0 V cache
 844a11324 fix: handle_bin_bcast for MIRRORED+split sources
-f0a44002a fix(sm_37): use __device__ instead of __constant__ memory for RoPE LUT
-a63281cd6 feat: complete TriAttention implementation
 ```
 
 ---
