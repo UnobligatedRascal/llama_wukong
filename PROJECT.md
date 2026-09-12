@@ -71,12 +71,13 @@ W spec common_specu: backend offload failed for seq_id=0; using CPU sampler
 
 **Two-phase fix:**
 
-**Phase 1 (IN PROGRESS):** Sync llama_lazarus with ggml-org
-- PR: https://github.com/UnobligatedRascal/llama_lazarus/pull/1 "Syncing from original"
-- Branch: ggml-org/llama.cpp:master → UnobligatedRascal/llama_lazarus:master
-- Stats: 58,812 additions, 12,941 deletions, 524 files
-- Status: Open, awaiting review/merge
-- Once merged: lazarus will have proper ggml-org ancestry
+**Phase 1 (CONFLICT RESOLVED):** Sync llama_lazarus with ggml-org
+- Original PR #1 had merge conflict in README.md (dirty state, not mergeable)
+- Resolved conflict locally, pushed clean merge branch
+- New PR: https://github.com/UnobligatedRascal/llama_lazarus/pull/2 "Sync ggml-org/master (conflict-resolved)"
+- Branch: pr-1-sync-resolved → master
+- Status: Open, mergeable=True (awaiting merge)
+- Once merged: lazarus will have proper ggml-org ancestry (202 commits synced)
 
 **Phase 2 (PENDING):** Create clean llama_wukong fork
 - After PR #1 merges, fetch updated upstream (llama_lazarus)
