@@ -167,12 +167,6 @@ value binary_expression::execute_impl(context & ctx) {
         }
         throw std::runtime_error("Cannot perform operation " + op.value + " on undefined values");
     } else if (is_val<value_none>(left_val) || is_val<value_none>(right_val)) {
-        if (!is_val<value_none>(right_val) && (op.value == "in" || op.value == "not in")) {
-            // case: none in {'low': 1}
-            // A null left operand is looked up like any other value.
-            bool member = test_is_in();
-            return mk_val<value_bool>(op.value == "in" ? member : !member);
-        }
         if (op.value == "+" || op.value == "~") {
             value res = mk_val<value_undefined>();
             if (workaround_concat_null_with_str(res)) {
@@ -418,16 +412,10 @@ value test_expression::execute_impl(context & ctx) {
         throw std::runtime_error("Invalid test expression");
     }
 
-    const std::string test_name = "test_is_" + test_id;
-    auto it = builtins.find(test_name);
-    JJ_DEBUG("Test expression %s '%s' %s (using function '%s')", operand->type().c_str(), test_id.c_str(), negate ? "(negate)" : "", test_name.c_str());
+    auto it = builtins.find("test_is_" + test_id);
+    JJ_DEBUG("Test expression %s '%s' %s (using function 'test_is_%s')", operand->type().c_str(), test_id.c_str(), negate ? "(negate)" : "", test_id.c_str());
     if (it == builtins.end()) {
         throw std::runtime_error("Unknown test '" + test_id + "'");
-    }
-
-    if (ctx.is_get_stats) {
-        value_t::stats_t::mark_used(input);
-        input->stats.ops.insert(test_name);
     }
 
     auto res = it->second(args);

@@ -7,7 +7,7 @@ import argparse
 import statistics
 import logging
 import bisect
-from typing import Any, Dict, List, Optional, Iterable
+from typing import Any, Dict, List, Optional
 
 from collections import defaultdict
 
@@ -473,8 +473,6 @@ def print_bubbles_timeline(op):
     all_bubbles = []
     for t in active_threads:
         stats = thread_stats[t]
-        assert isinstance(stats['dma_bubbles'], Iterable)
-        assert isinstance(stats['compute_bubbles'], Iterable)
         for start, end, dur in stats['compute_bubbles']:
             pct = (dur / batch_duration) * 100.0
             all_bubbles.append((dur, f"Thread {t} Compute: bubble of {dur} cycles ({pct:.1f}%) at {start - op_start} to {end - op_start}"))

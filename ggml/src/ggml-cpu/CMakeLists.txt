@@ -29,6 +29,7 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
     list (APPEND GGML_CPU_SOURCES
         ggml-cpu/ggml-cpu.c
         ggml-cpu/ggml-cpu.cpp
+        ggml-cpu/ggml-cpu-numa-replicate.c
         ggml-cpu/repack.cpp
         ggml-cpu/repack.h
         ggml-cpu/iqp.cpp
@@ -58,6 +59,13 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
 
     target_compile_features(${GGML_CPU_NAME} PRIVATE c_std_11 cxx_std_17)
     target_include_directories(${GGML_CPU_NAME} PRIVATE . ggml-cpu)
+    # Link libnuma for NUMA replication support (guarded by #ifdef in source)
+    if(UNIX)
+        find_library(NUMA_LIB numa)
+        if(NUMA_LIB)
+            target_link_libraries(${GGML_CPU_NAME} PRIVATE ${NUMA_LIB})
+        endif()
+    endif()
 
     if (APPLE AND GGML_ACCELERATE)
         find_library(ACCELERATE_FRAMEWORK Accelerate)
@@ -455,16 +463,12 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
                 ggml-cpu/spacemit/repack.h
                 ggml-cpu/spacemit/ime_env.cpp
                 ggml-cpu/spacemit/ime_env.h
+                ggml-cpu/spacemit/ime1_kernels.cpp
+                ggml-cpu/spacemit/ime2_kernels.cpp
                 ggml-cpu/spacemit/ime_kernels.h
                 ggml-cpu/spacemit/rvv_kernels.cpp
                 ggml-cpu/spacemit/rvv_kernels.h
             )
-            if ("RISCV64_SPACEMIT_IME1" IN_LIST RISCV64_SPACEMIT_IME_SPEC)
-                list(APPEND GGML_CPU_SOURCES ggml-cpu/spacemit/ime1_kernels.cpp)
-            endif()
-            if ("RISCV64_SPACEMIT_IME2" IN_LIST RISCV64_SPACEMIT_IME_SPEC)
-                list(APPEND GGML_CPU_SOURCES ggml-cpu/spacemit/ime2_kernels.cpp)
-            endif()
         endif()
         if(NOT GGML_CPU_ALL_VARIANTS)
             set(MARCH_STR "rv64gc")
@@ -520,9 +524,7 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
     elseif (GGML_SYSTEM_ARCH STREQUAL "s390x")
         message(STATUS "s390x detected")
         list(APPEND GGML_CPU_SOURCES
-            ggml-cpu/arch/s390/quants.c
-            ggml-cpu/arch/s390/repack.cpp
-            )
+            ggml-cpu/arch/s390/quants.c)
 
         # for native compilation
         if (GGML_NATIVE)
@@ -674,12 +676,6 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
     target_sources(${GGML_CPU_NAME} PRIVATE ${GGML_CPU_SOURCES})
     target_compile_options(${GGML_CPU_NAME} PRIVATE ${ARCH_FLAGS})
     target_compile_definitions(${GGML_CPU_NAME} PRIVATE ${ARCH_DEFINITIONS})
-
-    if (CMAKE_C_COMPILER_ID STREQUAL "GNU" AND NOT GGML_SYSTEM_ARCH STREQUAL "x86")
-        message(STATUS "Skipping PCH for ${GGML_CPU_NAME}: GCC PCH is only enabled for x86 (arch: ${GGML_SYSTEM_ARCH})")
-    else()
-        target_precompile_headers(${GGML_CPU_NAME} PRIVATE ggml-impl.h)
-    endif()
 
     if (EMSCRIPTEN)
         set_target_properties(${GGML_CPU_NAME} PROPERTIES COMPILE_FLAGS "-msimd128")

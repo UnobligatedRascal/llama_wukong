@@ -1,7 +1,6 @@
 #include "llama.h"
 
 #include "llama-impl.h"
-#include "llama-version.h"
 
 #include "llama-chat.h"
 #include "llama-context.h"
@@ -132,6 +131,8 @@ void llama_backend_init(void) {
     if (!ggml_backend_reg_count()) {
         ggml_backend_load_all();
     }
+    // Initialize NUMA weight replication if enabled
+    llama_numa_replicate_init();
 }
 
 void llama_numa_init(enum ggml_numa_strategy numa) {
@@ -146,6 +147,13 @@ void llama_numa_init(enum ggml_numa_strategy numa) {
     }
 }
 
+
+// NUMA weight replication init (dual-socket Xeon optimization)
+void llama_numa_replicate_init(void) {
+#if defined(GGML_NUMA_REPLICATE) && defined(__gnu_linux__)
+    ggml_numa_replicate_init();
+#endif
+}
 void llama_backend_free(void) {
     ggml_quantize_free();
 }

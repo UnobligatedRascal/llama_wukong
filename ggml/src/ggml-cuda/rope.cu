@@ -2,6 +2,7 @@
 #include "ggml-cuda/common.cuh"
 #include "ggml.h"
 #include "rope.cuh"
+#include "rope-lut.cuh"
 
 struct rope_corr_dims {
     float v[2];
@@ -33,8 +34,10 @@ static __device__ void rope_yarn(
         // Get n-d magnitude scaling corrected for interpolation
         mscale *= 1.0f + 0.1f * logf(1.0f / freq_scale);
     }
-    cos_theta = cosf(theta) * mscale;
-    sin_theta = sinf(theta) * mscale;
+    float cos_raw, sin_raw;
+    rope_lut::rope_sin_cos(theta, sin_raw, cos_raw);
+    cos_theta = cos_raw * mscale;
+    sin_theta = sin_raw * mscale;
     if (!forward) {
         sin_theta *= -1.0f;
     }

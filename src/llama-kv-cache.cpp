@@ -1,11 +1,13 @@
 #include "llama-kv-cache.h"
 
+#include "llama-triattention.h"
 #include "llama-impl.h"
 #include "llama-io.h"
 #include "llama-model.h"
 #include "llama-context.h"
 
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <cmath>
 #include <cstring>
@@ -377,6 +379,11 @@ void llama_kv_cache::clear(bool data) {
             ggml_backend_buffer_clear(buf.get(), 0);
         }
     }
+
+    // Reset TriAttention state
+    if (triattention_st) {
+        triattention_on_reset(triattention_st);
+    }
 }
 
 bool llama_kv_cache::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos p1) {
@@ -429,6 +436,10 @@ bool llama_kv_cache::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos p1) {
             for (uint32_t i = 0; i < cells.size(); ++i) {
                 if (!cells.pos_in(i, p0, p1)) {
                     continue;
+                }
+
+                if (triattention_st) {
+                    triattention_on_cell_removed(triattention_st, i);
                 }
 
                 cells.rm(i);
@@ -892,6 +903,18 @@ bool llama_kv_cache::update(llama_context * lctx, bool do_shift, const stream_co
         }
     }
 
+    // TriAttention pruning: check if we should prune after this update
+    if (triattention_st) {
+        uint32_t n_used = 0;
+        for (uint32_t s = 0; s < n_stream; ++s) {
+            n_used += v_cells[s].size();
+        }
+
+        if (triattention_should_prune(triattention_st, n_used)) {
+            triattention_try_prune();
+        }
+    }
+
     return updated;
 }
 
@@ -1125,10 +1148,18 @@ void llama_kv_cache::apply_ubatch(const slot_info & sinfo, const llama_ubatch & 
 
                 seq_pos_max_rm[seq_id] = std::max(seq_pos_max_rm[seq_id], pos);
 
+                if (triattention_st) {
+                    triattention_on_cell_removed(triattention_st, idx);
+                }
+
                 cells.rm(idx);
             }
 
             cells.pos_set(idx, ubatch.pos[i]);
+
+            if (triattention_st) {
+                triattention_on_token_added(triattention_st, idx, (int32_t)ubatch.pos[i]);
+            }
 
             if (ubatch.is_pos_2d() || ubatch.token || hparams.ple_n_heads > 0) {
                 llama_kv_cell_ext ext;
@@ -1334,6 +1365,14 @@ ggml_tensor * llama_kv_cache::cpy_k(ggml_context * ctx, ggml_tensor * k_cur, ggm
 
     k_cur = ggml_view_2d(ctx, k_cur, n_embd_gqa, n_tokens, k_cur->nb[2], 0);
 
+    // Make k_cur contiguous before SET_ROWS to avoid non-contiguous split tensors
+    // when using turbo3_0/turbo4_0 K cache with tensor-split. The meta backend's stride
+    // scaling produces invalid/aliased strides for non-contiguous split tensors.
+    // Same fix pattern as FA output in llama-graph.cpp:2600-2612.
+    if (!ggml_is_contiguous(k_cur)) {
+        k_cur = ggml_cont(ctx, k_cur);
+    }
+
     const int64_t n_stream = k->ne[2];
 
     if (n_stream > 1) {
@@ -1371,6 +1410,14 @@ ggml_tensor * llama_kv_cache::cpy_v(ggml_context * ctx, ggml_tensor * v_cur, ggm
     // take this branch when FA is enabled (the V cache is not transposed)
     if (!v_trans) {
         v_cur = ggml_view_2d(ctx, v_cur, n_embd_gqa, n_tokens, v_cur->nb[2], 0);
+
+        // Make v_cur contiguous before SET_ROWS to avoid non-contiguous split tensors
+        // when using turbo3_0/turbo4_0 V cache with tensor-split. The meta backend's stride
+        // scaling produces invalid/aliased strides for non-contiguous split tensors.
+        // Same fix pattern as FA output in llama-graph.cpp:2600-2612.
+        if (!ggml_is_contiguous(v_cur)) {
+            v_cur = ggml_cont(ctx, v_cur);
+        }
 
         if (n_stream > 1) {
             const int64_t kv_size = get_size();
@@ -1681,9 +1728,7 @@ static void set_input_kq_mask_impl(const args_set_input_kq_mask & args, T * data
 
                 // apply SWA if any
                 if (swa) {
-                    // see llama_non_causal_type
-                    const bool in_span = !causal && args.hparams.non_causal_type == LLAMA_NON_CAUSAL_TYPE_SWA_FULL && p0 >= seq_pos_min[seq_id];
-                    if (!in_span && llama_hparams::is_masked_swa(n_swa, swa_type, p0, p1)) {
+                    if (llama_hparams::is_masked_swa(n_swa, swa_type, p0, p1)) {
                         goto skip;
                     }
                 }
@@ -1753,12 +1798,6 @@ void llama_kv_cache::set_input_kq_mask(ggml_tensor * dst, const llama_ubatch * u
 
     // n_tps == n_tokens_per_stream
     const int64_t n_tps = n_tokens/n_stream;
-
-    // see llama_non_causal_type
-    // only the SWA cache (or the SWA layers of a single cache) become non-causal
-    if (!causal_attn && hparams.non_causal_type == LLAMA_NON_CAUSAL_TYPE_SWA_ONLY) {
-        causal_attn = swa_type == LLAMA_SWA_TYPE_NONE;
-    }
 
     //const int64_t t_start = ggml_time_us();
 
@@ -1843,10 +1882,58 @@ void llama_kv_cache::get_prev_tokens(const llama_ubatch & ubatch, uint32_t n, st
         return;
     }
 
-    // note: apply_ubatch() has already stored the current ubatch, so the cells cover the tokens
-    //       of this very ubatch as well, which is what we want
-    // the nearest cell at or before a position also resolves M-RoPE gaps, where multiple tokens
-    // share the same temporal pos
+    // note: apply_ubatch() has already stored the current ubatch
+    //       the window below thus covers tokens of this very ubatch as well, which is what we want
+    llama_pos p_min = std::numeric_limits<llama_pos>::max();
+    llama_pos p_max = std::numeric_limits<llama_pos>::min();
+
+    std::bitset<LLAMA_MAX_SEQ> seqs;
+
+    for (uint32_t i = 0; i < n_tokens; ++i) {
+        p_min = std::min(p_min, ubatch.pos[i]);
+        p_max = std::max(p_max, ubatch.pos[i]);
+    }
+
+    for (uint32_t s = 0; s < ubatch.n_seqs_unq; ++s) {
+        seqs.set(ubatch.seq_id_unq[s]);
+    }
+
+    const llama_pos w0 = p_min - (llama_pos) n;
+
+    // (seq_id, pos) -> token, for every cell that could be a predecessor of a ubatch token
+    std::unordered_map<uint64_t, llama_token> hist;
+
+    const auto key = [](llama_seq_id seq_id, llama_pos pos) {
+        return ((uint64_t) seq_id << 32) | (uint32_t) pos;
+    };
+
+    // handle M-RoPE gaps: multiple tokens share the same temporal pos
+    // TODO @ngxson : improve this in the future
+    std::array<std::pair<llama_pos, llama_token>, LLAMA_MAX_SEQ> below;
+    below.fill({ -1, LLAMA_TOKEN_NULL });
+
+    for (uint32_t s = 0; s < n_stream; ++s) {
+        // p_max inclusive: an embd token looks up cells at its own (shared) position
+        v_cells[s].for_each_token_in(seqs, 0, p_max + 1,
+            [&](llama_seq_id seq_id, llama_pos pos, llama_token tok) {
+                if (pos >= w0) {
+                    hist[key(seq_id, pos)] = tok;
+                } else if (pos > below[seq_id].first) {
+                    below[seq_id] = { pos, tok };
+                }
+            });
+    }
+
+    // the token at pos p, or the nearest earlier one when p falls in an M-RoPE gap
+    const auto lookup = [&](llama_seq_id seq_id, llama_pos p) -> llama_token {
+        for (llama_pos q = p; q >= w0; --q) {
+            const auto it = hist.find(key(seq_id, q));
+            if (it != hist.end()) {
+                return it->second;
+            }
+        }
+        return below[seq_id].second;
+    };
 
     // an embd (multimodal) ubatch can repeat one position for a whole image, so positions
     // do not encode the token order; resolve its predecessors by ubatch order instead
@@ -1884,7 +1971,7 @@ void llama_kv_cache::get_prev_tokens(const llama_ubatch & ubatch, uint32_t n, st
                 continue;
             }
 
-            res[i*n + j] = v_cells[seq_to_stream[seq_id]].seq_pos_tok_le(seq_id, p);
+            res[i*n + j] = lookup(seq_id, p);
         }
     }
 }
@@ -2346,12 +2433,6 @@ bool llama_kv_cache::state_read_meta(llama_io_read_i & io, uint32_t strm, uint32
 
         ubatch.seq_id_unq[0] = dest_seq_id;
 
-        // the ext as it was saved, to put back after apply_ubatch()
-        std::vector<llama_kv_cell_ext> exts;
-        if (has_cell_ext()) {
-            exts.resize(cell_count);
-        }
-
         for (uint32_t i = 0; i < cell_count; ++i) {
             llama_pos pos;
             uint32_t n_seq_id;
@@ -2375,8 +2456,6 @@ bool llama_kv_cache::state_read_meta(llama_io_read_i & io, uint32_t strm, uint32
 
                 // apply_ubatch() below restores ext.tok from the ubatch tokens
                 ubatch.token[i] = ext.tok;
-
-                exts[i] = ext;
             }
 
             // read the sequence id, but directly discard it - we will use dest_seq_id instead
@@ -2427,14 +2506,6 @@ bool llama_kv_cache::state_read_meta(llama_io_read_i & io, uint32_t strm, uint32
         //       only ext.tok and the M-RoPE 2D position round-trip through it
         //       see: https://github.com/ggml-org/llama.cpp/pull/16825#issuecomment-3460868350
         apply_ubatch(sinfo, ubatch);
-
-        // apply_ubatch() takes the 2D position from the ubatch, and that ubatch is built with this
-        // cache's own n_pos_per_embd. a cache that does not use M-RoPE itself but mirrors one that
-        // does (the qwen4exp QSA indexer) would drop x and y. put the saved ext back instead, which
-        // is what the whole-context path below already does.
-        for (uint32_t i = 0; i < (uint32_t) exts.size(); ++i) {
-            cells.ext_set(sinfo.idxs[0][i], exts[i]);
-        }
 
         LLAMA_LOG_DEBUG("%s: cell_count = %d, dest_seq_id = %d\n", __func__, cell_count, dest_seq_id);
 
@@ -2800,6 +2871,87 @@ void llama_kv_cache_context::set_input_kq_mask(ggml_tensor * dst, const llama_ub
 
 void llama_kv_cache_context::set_input_pos_bucket(ggml_tensor * dst, const llama_ubatch * ubatch) const {
     kv->set_input_pos_bucket(dst, ubatch);
+}
+
+//
+// TriAttention integration methods
+//
+
+void llama_kv_cache::init_triattention(const char * stats_path, const triattention_config * cfg) {
+    if (!stats_path || stats_path[0] == '\0') {
+        return;
+    }
+    if (triattention_st) {
+        triattention_free(triattention_st);
+        triattention_st = nullptr;
+    }
+
+    const uint32_t kv_size = v_cells.empty() ? 0 : (uint32_t)v_cells[0].size();
+    const double rope_theta = (double)hparams.rope_freq_base_train;
+    const uint32_t head_dim = hparams.n_embd_head_k(0);
+    const uint32_t n_kv_heads = hparams.n_head_kv(0);
+
+    triattention_st = triattention_init(stats_path, cfg, kv_size, rope_theta, head_dim, n_kv_heads);
+    if (!triattention_st) {
+        LLAMA_LOG_ERROR("%s: failed to initialize TriAttention from %s\n", __func__, stats_path);
+    }
+}
+
+int32_t llama_kv_cache::triattention_try_prune() {
+    if (!triattention_st) {
+        return 0;
+    }
+
+    // Build K tensor array and layer map for triattention_prune_impl()
+    const uint32_t n_kv_layers = (uint32_t)layers.size();
+    std::vector<ggml_tensor *> k_tensors(n_kv_layers);
+    std::vector<int32_t> layer_map(n_kv_layers);
+
+    for (uint32_t i = 0; i < n_kv_layers; i++) {
+        k_tensors[i] = layers[i].k;
+        layer_map[i] = (int32_t)layers[i].il;
+    }
+
+    const uint32_t kv_size = (uint32_t)v_cells[0].size();
+
+    int32_t n_evicted = triattention_prune_impl(
+        triattention_st,
+        k_tensors.data(),
+        n_kv_layers,
+        layer_map.data(),
+        kv_size);
+
+    if (n_evicted > 0) {
+        // Sync cell metadata: remove cells that triattention marked as evicted
+        // (cell_positions[i] == -1 after prune means the cell was evicted)
+        auto & cells = v_cells[0];
+        auto & head  = v_heads[0];
+        uint32_t new_head = cells.size();
+
+        for (uint32_t i = 0; i < kv_size; i++) {
+            if (triattention_st->cell_positions[i] < 0 && !cells.is_empty(i)) {
+                cells.rm(i);
+                if (new_head == cells.size()) {
+                    new_head = i;
+                }
+            }
+        }
+
+        if (new_head != cells.size() && new_head < head) {
+            head = new_head;
+        }
+
+        // Note: position gaps from evicted cells are intentionally left as-is.
+        // The recent-token protection in triattention_prune_impl() ensures that
+        // the most recent divide_length tokens are never evicted, so seq_pos_max
+        // always equals the server's expected position.
+    }
+
+    return n_evicted;
+}
+
+bool llama_kv_cache::has_triattention() const {
+    return triattention_st != nullptr;
 }
 
 void llama_kv_cache_context::set_input_k_rot(ggml_tensor * dst) const {

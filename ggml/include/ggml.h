@@ -430,24 +430,20 @@ extern "C" {
         GGML_TYPE_NVFP4   = 40, // NVFP4 (4 blocks, E4M3 scale)
         GGML_TYPE_Q1_0    = 41,
         GGML_TYPE_Q2_0    = 42,
-        GGML_TYPE_COUNT   = 43,
+        // TurboQuant KV cache compression (PolarQuant with WHT rotation)
+        // See: arXiv 2504.19874 (ICLR 2026)
+        // sm_37 compatible: FP32 kernels, no tensor cores required
+        // UnobligatedRascal: ported for K80 cluster
+        GGML_TYPE_TURBO3_0 = 43, // 3-bit PolarQuant KV cache (4.6x compression)
+        GGML_TYPE_TURBO4_0 = 44, // 4-bit PolarQuant KV cache (3.8x compression)
+        GGML_TYPE_TURBO2_0 = 45, // 2-bit PolarQuant KV cache (6.4x compression)
+        GGML_TYPE_COUNT   = 46,
     };
 
-    // [TAG_GGML_PREC]
-    // this enum is used to declare the allowed numerical precision/data-types types that can be used during the compute of an op
-    // the declared types can be:
-    //  - result accumulation type
-    //  - source tensor data representation type
-    //  - etc.
-    // the precision parameters are stored as ggml_tensor.op_params to the respective ops
+    // precision
     enum ggml_prec {
-        GGML_PREC_UNDEFINED = 0,
-        GGML_PREC_DEFAULT   = 0,  // note: deprecated, use GGML_PREC_UNDEFINED
-        GGML_PREC_F32       = 10,
-        GGML_PREC_BF16      = 15,
-        GGML_PREC_F16       = 20,
-        GGML_PREC_Q8        = 30,
-        GGML_PREC_Q4        = 40,
+        GGML_PREC_DEFAULT =  0, // stored as ggml_tensor.op_params, 0 by default
+        GGML_PREC_F32     = 10,
     };
 
     // op hint
@@ -1440,42 +1436,6 @@ extern "C" {
             struct ggml_tensor  * b,
             float                 eps);
 
-    // [TAG_GGML_PREC]
-    // set the minimum required accumulator type for the implementation to use during the compute
-    // for example:
-    //  - GGML_PREC_F32  - requires accumulation of the results in F32
-    //  - GGML_PREC_BF16 - can accumulate the results in BF16, F32
-    //  - GGML_PREC_F16  - can accumulate the results in F16, F32
-    //  - GGML_PREC_Q8   - not allowed
-    //  - GGML_PREC_Q4   - not allowed
-    //
-    // return false on faliure
-    GGML_API bool ggml_prec_set_acc(
-            struct ggml_tensor * a,
-            enum ggml_prec       prec);
-
-    // [TAG_GGML_PREC]
-    // set the smallest rank that the implementation can use to internally convert the src[idx] data to
-    // ranks in decreasing order:
-    //  - GGML_PREC_F32  - GGML_TYPE_F32
-    //  - GGML_PREC_BF16 - GGML_TYPE_BF16
-    //  - GGML_PREC_F16  - GGML_TYPE_F16,
-    //  - GGML_PREC_Q8   - GGML_TYPE_Q8_0, GGML_TYPE_Q8_1, GGML_TYPE_Q8_K, etc.
-    //  - GGML_PREC_Q4   - GGML_TYPE_Q4_0, GGML_TYPE_Q4_1, GGML_TYPE_Q4_K, GGML_TYPE_NVFP4, GGML_TYPE_MXFP4, etc.
-    //
-    // for example:
-    //   - ggml_prec_set_src(a, GGML_PREC_Q8, 1):
-    //     - allows the implementation to quantize F32, BF16, F16 data of src[1] down to GGML_TYPE_Q8_0
-    //     - cannot quantize it down to GGML_TYPE_Q4_0 or GGML_TYPE_NVFP4
-    //   - ggml_prec_set_src(a, GGML_PREC_Q4, 1):
-    //     - allows the implementation to quantize F32, BF16, F16 data of src[1] down to 4-bit datatypes such as GGML_TYPE_Q4_K, GGML_TYPE_NVFP4 etc.
-    //
-    // return false on faliure
-    GGML_API bool ggml_prec_set_src(
-            struct ggml_tensor * a,
-            enum ggml_prec       prec,
-            int                  idx);
-
     // A: k columns, n rows => [ne03, ne02, n, k]
     // B: k columns, m rows  (i.e. we transpose it internally) => [ne03 * x, ne02 * y, m, k]
     // result is n columns, m rows => [ne03 * x, ne02 * y, m, n]
@@ -1486,10 +1446,9 @@ extern "C" {
 
     // change the precision of a matrix multiplication
     // set to GGML_PREC_F32 for higher precision (useful for phi-2)
-    GGML_DEPRECATED(GGML_API void ggml_mul_mat_set_prec(
+    GGML_API void ggml_mul_mat_set_prec(
             struct ggml_tensor * a,
-            enum ggml_prec       prec),
-        "use ggml_prec_set_acc() instead");
+            enum ggml_prec       prec);
 
     // change the hint of a matrix multiplication
     GGML_API void ggml_mul_mat_set_hint(
@@ -2494,19 +2453,12 @@ extern "C" {
             float                 max_bias,
             float                 logit_softcap);
 
-    GGML_DEPRECATED(GGML_API void ggml_flash_attn_ext_set_prec(
+    GGML_API void ggml_flash_attn_ext_set_prec(
             struct ggml_tensor * a,
-            enum ggml_prec       prec),
-        "use ggml_prec_set_acc() instead");
+            enum ggml_prec       prec);
 
     GGML_API enum ggml_prec ggml_flash_attn_ext_get_prec(
             const struct ggml_tensor * a);
-
-    // Use finite mask entries as a sparse K/V set. Set 0 to disable.
-    // n_kv_max must bound the number of finite entries in every mask row.
-    GGML_API void ggml_flash_attn_ext_set_n_kv_max(
-            struct ggml_tensor * a,
-            int32_t              n_kv_max);
 
     GGML_API void ggml_flash_attn_ext_add_sinks(
             struct ggml_tensor * a,

@@ -311,6 +311,10 @@ const std::vector<ggml_type> kv_cache_types = {
     GGML_TYPE_IQ4_NL,
     GGML_TYPE_Q5_0,
     GGML_TYPE_Q5_1,
+    // TurboQuant KV cache types — UnobligatedRascal sm_37
+    GGML_TYPE_TURBO3_0,
+    GGML_TYPE_TURBO4_0,
+    GGML_TYPE_TURBO2_0,
 };
 
 static ggml_type kv_cache_type_from_str(const std::string & s) {
@@ -872,6 +876,17 @@ static bool common_params_parse_ex(int argc, char ** argv, common_params_context
                     arg.c_str(), e.what(), opt.to_string().c_str()));
             }
         }
+
+        // TODO: remove this check after deprecating --mmap|mlock|dio
+        auto has_arg = [&](std::initializer_list<const char *> names) {
+            return std::any_of(names.begin(), names.end(), [&](const char * name) {
+                return seen_args.count(name);
+            });
+        };
+        if (has_arg({"-lm", "--load-mode"}) &&
+            has_arg({"--mlock", "--mmap", "--no-mmap", "-dio", "--direct-io", "-ndio", "--no-direct-io"})) {
+            LOG_WRN("DEPRECATED: `--load-mode` and `--mlock`/`--mmap`/`--direct-io` should not be combined; only the last flag on the command line will take effect\n");
+        }
     };
 
     // parse all CLI args now, so that -hf is available below for remote preset resolution
@@ -882,12 +897,6 @@ static bool common_params_parse_ex(int argc, char ** argv, common_params_context
 
     postprocess_cpu_params(params.speculative.draft.cpuparams,       &params.cpuparams);
     postprocess_cpu_params(params.speculative.draft.cpuparams_batch, &params.cpuparams_batch);
-
-    // default the mmproj device to the global device selection if not set explicitly with -mmdev
-    if (params.mmproj_use_gpu && params.mmproj_device == nullptr && !params.devices.empty()) {
-        params.mmproj_device = params.devices.front();
-        params.mmproj_use_gpu = params.mmproj_device != nullptr;
-    }
 
     if (params.prompt_cache_all && (params.interactive || params.interactive_first)) {
         throw std::invalid_argument("error: --prompt-cache-all not supported in interactive mode yet\n");
@@ -953,11 +962,6 @@ static bool common_params_parse_ex(int argc, char ** argv, common_params_context
             params.chat_template.c_str(),
             params.use_jinja ? "" : "\nnote: llama.cpp was started without --jinja, we only support commonly used templates"
         ));
-    }
-
-    // if the preserve_reasoning kwarg was not specified explicitly, enable it by default
-    if (!params.default_template_kwargs.count("preserve_reasoning")) {
-        params.default_template_kwargs["preserve_reasoning"] = "true";
     }
 
     return true;
@@ -2456,6 +2460,107 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             params.cache_type_v = kv_cache_type_from_str(value);
         }
     ).set_env("LLAMA_ARG_CACHE_TYPE_V"));
+
+    // TriAttention: Trigonometric KV Cache Eviction
+    add_opt(common_arg(
+        {"--triattention-stats"}, "PATH",
+        "path to .triattention calibration file (enables TriAttention eviction)",
+        [](common_params & params, const std::string & value) {
+            params.triattention_stats = value;
+        }
+    ));
+    add_opt(common_arg(
+        {"--triattention-budget"}, "N",
+        string_format("max KV entries to retain after pruning (default: %d)", params.triattention_budget),
+        [](common_params & params, const std::string & value) {
+            params.triattention_budget = std::stoi(value);
+        }
+    ));
+    add_opt(common_arg(
+        {"--triattention-window"}, "N",
+        string_format("pruning interval in decode tokens (default: %d)", params.triattention_window),
+        [](common_params & params, const std::string & value) {
+            params.triattention_window = std::stoi(value);
+        }
+    ));
+    add_opt(common_arg(
+        {"--triattention-offset-max"}, "N",
+        string_format("max geometric offset for scoring (default: %d)", params.triattention_offset_max),
+        [](common_params & params, const std::string & value) {
+            params.triattention_offset_max = std::stoi(value);
+        }
+    ));
+    add_opt(common_arg(
+        {"--triattention-mode"}, "MODE",
+        "pruning granularity: global, per-kv-head, per-layer-head (default: global)",
+        [](common_params & params, const std::string & value) {
+            if (value == "global")          params.triattention_mode = 0;
+            else if (value == "per-kv-head")     params.triattention_mode = 1;
+            else if (value == "per-layer-head")  params.triattention_mode = 2;
+            else throw std::invalid_argument("invalid triattention mode: " + value);
+        }
+    ));
+    add_opt(common_arg(
+        {"--triattention-trigger"}, "MODE",
+        "pruning trigger: interval, slack (default: interval)",
+        [](common_params & params, const std::string & value) {
+            if (value == "interval")    params.triattention_trigger = 0;
+            else if (value == "slack")  params.triattention_trigger = 1;
+            else throw std::invalid_argument("invalid triattention trigger: " + value);
+        }
+    ));
+    add_opt(common_arg(
+        {"--triattention-agg"}, "MODE",
+        "score aggregation: mean, max (default: mean)",
+        [](common_params & params, const std::string & value) {
+            if (value == "mean")    params.triattention_agg = 0;
+            else if (value == "max")  params.triattention_agg = 1;
+            else throw std::invalid_argument("invalid triattention aggregation: " + value);
+        }
+    ));
+    add_opt(common_arg(
+        {"--triattention-seed"}, "N",
+        string_format("RNG seed for tie-breaking noise, -1 to disable (default: %d)", params.triattention_seed),
+        [](common_params & params, const std::string & value) {
+            params.triattention_seed = std::stoi(value);
+        }
+    ));
+    add_opt(common_arg(
+        {"--triattention-normalize"},
+        "z-score normalize scores per head before selection",
+        [](common_params & params) {
+            params.triattention_normalize = true;
+        }
+    ));
+    add_opt(common_arg(
+        {"--triattention-no-protect-prefill"},
+        "allow eviction of prompt tokens (default: protected)",
+        [](common_params & params) {
+            params.triattention_protect_prefill = false;
+        }
+    ));
+    add_opt(common_arg(
+        {"--triattention-disable-mlr"},
+        "ablation: disable MLR weighting (use q_abs_mean directly)",
+        [](common_params & params) {
+            params.triattention_disable_mlr = true;
+        }
+    ));
+    add_opt(common_arg(
+        {"--triattention-disable-trig"},
+        "ablation: drop trigonometric term, norm-only scoring",
+        [](common_params & params) {
+            params.triattention_disable_trig = true;
+        }
+    ));
+    add_opt(common_arg(
+        {"--triattention-log"},
+        "log pruning events to stderr",
+        [](common_params & params) {
+            params.triattention_log = true;
+        }
+    ));
+
     add_opt(common_arg(
         {"--hellaswag"},
         "compute HellaSwag score over random tasks from datafile supplied with -f",
@@ -2605,7 +2710,7 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
     add_opt(common_arg(
         // note: "-mmdev" must sort after "--rpc" in the preset map, else RPC devices are not registered yet
         {"-mmdev", "--mmproj-device"}, "DEVICE",
-        "device to use for multimodal projector (none = don't offload, default: follows --device)\n"
+        "device to use for multimodal projector (none = don't offload, default: auto)\n"
         "use --list-devices to see a list of available devices",
         [](common_params & params, const std::string & value) {
             if (value == "none") {
@@ -2684,6 +2789,32 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         ).set_env("LLAMA_ARG_RPC"));
     }
     add_opt(common_arg(
+        {"--mlock"},
+        "DEPRECATED in favor of `--load-mode`: force system to keep model in RAM rather than swapping or compressing",
+        [](common_params & params) {
+            LOG_WRN("DEPRECATED: --mlock is deprecated. use --load-mode mlock instead\n");
+            params.load_mode = LLAMA_LOAD_MODE_MLOCK;
+        }
+    ).set_env("LLAMA_ARG_MLOCK"));
+    add_opt(common_arg(
+        {"--mmap"},
+        {"--no-mmap"},
+        "DEPRECATED in favor of `--load-mode`: whether to memory-map model. (if mmap disabled, slower load but may reduce pageouts if not using mlock)",
+        [](common_params & params, bool value) {
+            LOG_WRN("DEPRECATED: --mmap and --no-mmap are deprecated. use --load-mode mmap instead\n");
+            params.load_mode = value ? LLAMA_LOAD_MODE_MMAP : LLAMA_LOAD_MODE_NONE;
+        }
+    ).set_env("LLAMA_ARG_MMAP"));
+    add_opt(common_arg(
+        {"-dio", "--direct-io"},
+        {"-ndio", "--no-direct-io"},
+        "DEPRECATED in favor of `--load-mode`: use DirectIO if available",
+        [](common_params & params, bool value) {
+            LOG_WRN("DEPRECATED: --direct-io and --no-direct-io are deprecated. use --load-mode dio instead\n");
+            params.load_mode = value ? LLAMA_LOAD_MODE_DIRECT_IO : LLAMA_LOAD_MODE_NONE;
+        }
+    ).set_env("LLAMA_ARG_DIO"));
+    add_opt(common_arg(
         {"-lm", "--load-mode"}, "MODE",
         "model loading mode (default: auto)\n"
         "- auto: mmap, unless a device does not support it\n"
@@ -2721,12 +2852,14 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         "- distribute: spread execution evenly over all nodes\n"
         "- isolate: only spawn threads on CPUs on the node that execution started on\n"
         "- numactl: use the CPU map provided by numactl\n"
+        "- mirror: distribute threads and enable NUMA-aware weight replication\n"
         "if run without this previously, it is recommended to drop the system page cache before using this\n"
         "see https://github.com/ggml-org/llama.cpp/issues/1437",
         [](common_params & params, const std::string & value) {
             /**/ if (value == "distribute" || value == "") { params.numa = GGML_NUMA_STRATEGY_DISTRIBUTE; }
             else if (value == "isolate") { params.numa = GGML_NUMA_STRATEGY_ISOLATE; }
             else if (value == "numactl") { params.numa = GGML_NUMA_STRATEGY_NUMACTL; }
+            else if (value == "mirror") { params.numa = GGML_NUMA_STRATEGY_MIRROR; }
             else { throw std::invalid_argument("invalid value"); }
         }
     ).set_env("LLAMA_ARG_NUMA"));
@@ -3527,10 +3660,6 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
                     LOG_WRN("Setting 'enable_thinking' via --chat-template-kwargs is deprecated. "
                             "Use --reasoning on / --reasoning off instead.\n");
                 }
-                if (item.key() == "preserve_reasoning") {
-                    LOG_WRN("Setting 'preserve_reasoning' via --chat-template-kwargs is deprecated. "
-                            "Use --reasoning-preserve / --no-reasoning-preserve instead.\n");
-                }
                 params.default_template_kwargs[item.key()] = item.value().dump();
             }
         }
@@ -3721,7 +3850,7 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
     add_opt(common_arg(
         {"--reasoning-preserve"},
         {"--no-reasoning-preserve"},
-        "preserve reasoning trace in the full history, not just the last assistant message (default: enabled)\n"
+        "preserve reasoning trace in the full history, not just the last assistant message (default: template default)\n"
         "compatible with certain templates having 'supports_preserve_reasoning' capability\n"
         "example: https://docs.z.ai/guides/capabilities/thinking-mode#preserved-thinking",
         [](common_params & params, bool value) {
@@ -3730,7 +3859,6 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             } else {
                 params.default_template_kwargs["preserve_reasoning"] = "false";
             }
-            params.preserve_reasoning_specified = true;
         }
     ).set_examples({LLAMA_EXAMPLE_SERVER, LLAMA_EXAMPLE_COMPLETION, LLAMA_EXAMPLE_CLI}).set_env("LLAMA_ARG_REASONING_PRESERVE"));
     add_opt(common_arg(
@@ -3870,14 +3998,6 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             common_log_set_file(common_log_main(), value.c_str());
         }
     ).set_env("LLAMA_ARG_LOG_FILE"));
-    add_opt(common_arg(
-        {"--log-jsonl"},
-        {"--no-log-jsonl"},
-        "Log as JSONL (one JSON object per line) to stdout, this also disables colored logging (default: disabled)",
-        [](common_params &, bool value) {
-            common_log_set_jsonl(common_log_main(), value);
-        }
-    ).set_env("LLAMA_ARG_LOG_JSONL"));
     add_opt(common_arg(
         {"--log-prompts-dir"}, "PATH",
         "Log prompts to directory (auto-created if not present; only used for debugging, default: disabled)",
@@ -4198,7 +4318,7 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
     ).set_spec().set_examples({LLAMA_EXAMPLE_SPECULATIVE, LLAMA_EXAMPLE_SERVER, LLAMA_EXAMPLE_CLI}).set_env("LLAMA_ARG_SPEC_DRAFT_BACKEND_SAMPLING"));
     add_opt(common_arg(
         {"--spec-draft-device", "-devd", "--device-draft"}, "<dev1,dev2,..>",
-        "comma-separated list of devices to use for offloading the draft model (none = don't offload, default: follows --device)\n"
+        "comma-separated list of devices to use for offloading the draft model (none = don't offload)\n"
         "use --list-devices to see a list of available devices",
         [](common_params & params, const std::string & value) {
             params.speculative.draft.devices = parse_device_list(value);

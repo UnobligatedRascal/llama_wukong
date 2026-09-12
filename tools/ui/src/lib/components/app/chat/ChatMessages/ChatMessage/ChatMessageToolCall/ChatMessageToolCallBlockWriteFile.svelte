@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { parseWriteFileMeta, parseWriteFileTitleMeta } from './parsers/write-file';
+	import { parseWriteFileMeta } from './parsers/write-file';
 	import ToolCallBlock from './ToolCallBlock.svelte';
 	import { XCircle } from '@lucide/svelte';
 	import { SyntaxHighlightedCode } from '$lib/components/app';
@@ -17,11 +17,7 @@
 
 	let { isStreaming, onToggle, open, section }: Props = $props();
 
-	const writeFileMeta = $derived(parseWriteFileTitleMeta(section));
-	// body-only: the full meta parses the embedded file content, and this
-	// derived is read solely from the children snippet, which renders only
-	// while the block is expanded
-	const writeFileBody = $derived(parseWriteFileMeta(section));
+	const writeFileMeta = $derived(parseWriteFileMeta(section));
 	const home = $derived(toolsStore.serverHome);
 </script>
 
@@ -49,7 +45,7 @@
 			</div>
 		{:else if meta}
 			<SyntaxHighlightedCode
-				code={writeFileBody?.content ?? ''}
+				code={meta.content}
 				language={meta.language}
 				maxHeight={MAX_HEIGHT_CODE_BLOCK}
 				streaming={ctx.isCodeStreaming}

@@ -1,5 +1,6 @@
 #include "common.cuh"
 #include "convert.cuh"
+#include "turbo-quant.cuh"
 
 static __device__ __forceinline__ void dequantize_q1_0(const void * vx, const int64_t ib, const int iqs, float2 & v){
     const block_q1_0 * x = (const block_q1_0 *) vx;
@@ -448,5 +449,123 @@ static __device__ __forceinline__ void dequantize_mxfp4(const void * vx, const i
     for (int j = 0; j < 4; ++j) {
         y[j+ 0] = ggml_cuda_cast<dst_t>(d * kvalues_mxfp4[q4[j] & 0xf]*0.5f);
         y[j+16] = ggml_cuda_cast<dst_t>(d * kvalues_mxfp4[q4[j] >>  4]*0.5f);
+    }
+}
+
+// =====================================================================
+// TurboQuant dequantization (sm_37 compatible, FP32 only)
+// Each turbo block = 128 elements = one WHT rotation group.
+// Dequant: unpack → centroid lookup → inverse WHT → scale by norm.
+// UnobligatedRascal — Making old hardware sing.
+// =====================================================================
+
+// Inverse WHT (same as forward, just different sign arrays)
+static __device__ __forceinline__ void turbo_iwht_128(float * x) {
+    // Apply inverse signs2 first
+    for (int i = 0; i < 128; i++) x[i] *= TURBO_WHT_SIGNS2[i];
+    // Butterfly (same as forward)
+    for (int h = 1; h < 128; h *= 2) {
+        for (int i = 0; i < 128; i += h * 2) {
+            for (int j = i; j < i + h; j++) {
+                float a = x[j];
+                float b = x[j + h];
+                x[j]     = a + b;
+                x[j + h] = a - b;
+            }
+        }
+    }
+    // Normalize + inverse signs1
+    const float inv_sqrt_128 = 0.08838834764831845f;
+    for (int i = 0; i < 128; i++) {
+        x[i] *= inv_sqrt_128 * TURBO_WHT_SIGNS1[i];
+    }
+}
+
+template<typename dst_t>
+static __device__ __forceinline__ void dequantize_turbo3_0(const void * vx, const int64_t ib, dst_t * yy, const int tid) {
+    const block_turbo3_0 * x = (const block_turbo3_0 *)vx;
+    const float norm = __half2float(x[ib].norm);
+
+    float buf[QK_TURBO3];
+
+    // Unpack 3-bit indices and look up centroids
+    for (int j = tid; j < QK_TURBO3; j += blockDim.x) {
+        uint8_t low2 = (x[ib].qs[j / 4] >> ((j % 4) * 2)) & 0x3;
+        uint8_t hi1  = (x[ib].signs[j / 8] >> (j % 8)) & 0x1;
+        uint8_t idx  = low2 | (hi1 << 2);
+        buf[j] = TURBO_CENTROIDS_3BIT[idx];
+    }
+    __syncthreads();
+
+    // Inverse WHT rotation
+    turbo_iwht_128(buf);
+    __syncthreads();
+
+    // Scale by norm and apply InnerQ inverse scale if active
+    dst_t * y = yy + ib * QK_TURBO3;
+    for (int j = tid; j < QK_TURBO3; j += blockDim.x) {
+        float val = buf[j] * norm;
+        if (d_innerq_active) {
+            val *= d_innerq_scale_inv[j];
+        }
+        y[j] = ggml_cuda_cast<dst_t>(val);
+    }
+}
+
+template<typename dst_t>
+static __device__ __forceinline__ void dequantize_turbo4_0(const void * vx, const int64_t ib, dst_t * yy, const int tid) {
+    const block_turbo4_0 * x = (const block_turbo4_0 *)vx;
+    const float norm = __half2float(x[ib].norm);
+
+    float buf[QK_TURBO4];
+
+    // Unpack 4-bit indices and look up centroids
+    for (int j = tid; j < QK_TURBO4; j += blockDim.x) {
+        uint8_t idx = (x[ib].qs[j / 2] >> ((j % 2) * 4)) & 0xF;
+        buf[j] = TURBO_CENTROIDS_4BIT[idx];
+    }
+    __syncthreads();
+
+    // Inverse WHT rotation
+    turbo_iwht_128(buf);
+    __syncthreads();
+
+    // Scale by norm and apply InnerQ inverse scale if active
+    dst_t * y = yy + ib * QK_TURBO4;
+    for (int j = tid; j < QK_TURBO4; j += blockDim.x) {
+        float val = buf[j] * norm;
+        if (d_innerq_active) {
+            val *= d_innerq_scale_inv[j];
+        }
+        y[j] = ggml_cuda_cast<dst_t>(val);
+    }
+}
+
+template<typename dst_t>
+static __device__ __forceinline__ void dequantize_turbo2_0(const void * vx, const int64_t ib, dst_t * yy, const int tid) {
+    const block_turbo2_0 * x = (const block_turbo2_0 *)vx;
+    const float norm = __half2float(x[ib].norm);
+
+    float buf[QK_TURBO2];
+
+    // Unpack 2-bit indices and look up centroids
+    for (int j = tid; j < QK_TURBO2; j += blockDim.x) {
+        uint8_t idx = (x[ib].qs[j / 4] >> ((j % 4) * 2)) & 0x3;
+        buf[j] = TURBO_CENTROIDS_2BIT[idx];
+    }
+    __syncthreads();
+
+    // Inverse WHT rotation
+    turbo_iwht_128(buf);
+    __syncthreads();
+
+    // Scale by norm and apply InnerQ inverse scale if active
+    dst_t * y = yy + ib * QK_TURBO2;
+    for (int j = tid; j < QK_TURBO2; j += blockDim.x) {
+        float val = buf[j] * norm;
+        if (d_innerq_active) {
+            val *= d_innerq_scale_inv[j];
+        }
+        y[j] = ggml_cuda_cast<dst_t>(val);
     }
 }

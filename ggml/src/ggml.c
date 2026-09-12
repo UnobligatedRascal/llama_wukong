@@ -1,7 +1,6 @@
 #define _CRT_SECURE_NO_DEPRECATE // Disables "unsafe" warnings on Windows
 #define _USE_MATH_DEFINES // For M_PI on MSVC
 
-#include "ggml-version.h"
 #include "ggml-backend.h"
 #include "ggml-impl.h"
 #include "ggml-threading.h"
@@ -942,6 +941,31 @@ static const struct ggml_type_traits type_traits[GGML_TYPE_COUNT] = {
         .blck_size                = 0,
         .type_size                = 0,
         .is_quantized             = false,
+    },
+    // TurboQuant KV cache types — UnobligatedRascal port for K80 sm_37
+    [GGML_TYPE_TURBO3_0] = {
+        .type_name                = "turbo3_0",
+        .blck_size                = QK_TURBO3,
+        .type_size                = sizeof(block_turbo3_0),
+        .is_quantized             = true,
+        .to_float                 = (ggml_to_float_t) dequantize_row_turbo3_0,
+        .from_float_ref           = (ggml_from_float_t) quantize_row_turbo3_0_ref,
+    },
+    [GGML_TYPE_TURBO4_0] = {
+        .type_name                = "turbo4_0",
+        .blck_size                = QK_TURBO4,
+        .type_size                = sizeof(block_turbo4_0),
+        .is_quantized             = true,
+        .to_float                 = (ggml_to_float_t) dequantize_row_turbo4_0,
+        .from_float_ref           = (ggml_from_float_t) quantize_row_turbo4_0_ref,
+    },
+    [GGML_TYPE_TURBO2_0] = {
+        .type_name                = "turbo2_0",
+        .blck_size                = QK_TURBO2,
+        .type_size                = sizeof(block_turbo2_0),
+        .is_quantized             = true,
+        .to_float                 = (ggml_to_float_t) dequantize_row_turbo2_0,
+        .from_float_ref           = (ggml_from_float_t) quantize_row_turbo2_0_ref,
     },
 };
 
@@ -3277,57 +3301,6 @@ struct ggml_tensor * ggml_l2_norm_inplace(
     return ggml_l2_norm_impl(ctx, a, eps, true);
 }
 
-// ggml_prec
-
-bool ggml_prec_set_acc(
-        struct ggml_tensor * a,
-        enum ggml_prec       prec) {
-    switch (a->op) {
-        case GGML_OP_MUL_MAT:
-        case GGML_OP_MUL_MAT_ID:
-            {
-                const int32_t prec_i32 = (int32_t) prec;
-                ggml_set_op_params_i32(a, 0, prec_i32);
-            }
-            break;
-        case GGML_OP_FLASH_ATTN_EXT:
-            {
-                const int32_t prec_i32 = (int32_t) prec;
-                ggml_set_op_params_i32(a, 3, prec_i32);
-            }
-            break;
-        default:
-            return false;
-    };
-
-    return true;
-}
-
-bool ggml_prec_set_src(
-        struct ggml_tensor * a,
-        enum ggml_prec       prec,
-        int                  idx) {
-    GGML_ASSERT(idx >= 0 && idx < GGML_MAX_SRC);
-
-    switch (a->op) {
-        case GGML_OP_MUL_MAT:
-        case GGML_OP_MUL_MAT_ID:
-            {
-                if (idx != 1) {
-                    return false;
-                }
-
-                const int32_t prec_i32 = (int32_t) prec;
-                ggml_set_op_params_i32(a, 2 + idx, prec_i32);
-            }
-            break;
-        default:
-            return false;
-    };
-
-    return true;
-}
-
 // ggml_mul_mat
 
 static inline bool ggml_can_mul_mat(const struct ggml_tensor * t0, const struct ggml_tensor * t1) {
@@ -5558,15 +5531,6 @@ enum ggml_prec ggml_flash_attn_ext_get_prec(
     return (enum ggml_prec) prec_i32;
 }
 
-void ggml_flash_attn_ext_set_n_kv_max(
-        struct ggml_tensor * a,
-        int32_t              n_kv_max) {
-    GGML_ASSERT(a->op == GGML_OP_FLASH_ATTN_EXT);
-    GGML_ASSERT(n_kv_max >= 0);
-
-    ggml_set_op_params_i32(a, 4, n_kv_max);
-}
-
 void ggml_flash_attn_ext_add_sinks(
         struct ggml_tensor * a,
         struct ggml_tensor * sinks) {
@@ -7387,7 +7351,7 @@ void ggml_build_backward_expand(
         }
 
         // inplace operations are currently not supported
-        GGML_ASSERT(!node->view_src || node->op == GGML_OP_CPY || node->op == GGML_OP_SET_ROWS || node->op == GGML_OP_VIEW ||
+        GGML_ASSERT(!node->view_src || node->op == GGML_OP_CPY || node->op == GGML_OP_VIEW ||
             node->op == GGML_OP_RESHAPE || node->op == GGML_OP_PERMUTE || node->op == GGML_OP_TRANSPOSE);
 
         const size_t ihash = ggml_hash_find(&cgraph->visited_hash_set, node);

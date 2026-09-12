@@ -554,6 +554,15 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(
            (src_ss[0].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED && (src_ss[1].axis == GGML_BACKEND_SPLIT_AXIS_PARTIAL)))) {
             return src_ss[0]; // GGML_OP_ADD_ID
         }
+        // Element-wise with one MIRRORED and one split operand: result follows the split operand.
+        // This occurs in gated attention (e.g., FA + turbo3_0 V cache) where pregate is MIRRORED
+        // but gate_sigmoid is split on the hidden dim.
+        if (src_ss[0].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED && src_ss[1].axis >= 0 && src_ss[1].axis < GGML_MAX_DIMS) {
+            return src_ss[1];
+        }
+        if (src_ss[1].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED && src_ss[0].axis >= 0 && src_ss[0].axis < GGML_MAX_DIMS) {
+            return src_ss[0];
+        }
         GGML_ASSERT(tensor->src[2] == nullptr || src_ss[2].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED);
         return handle_generic(src_ss, /*scalar_only =*/ false);
     };
@@ -577,6 +586,11 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(
     auto handle_mul_mat = [&](const std::vector<ggml_backend_meta_split_state> & src_ss) -> ggml_backend_meta_split_state {
         if (src_ss[0].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED && src_ss[1].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED) {
             return {GGML_BACKEND_SPLIT_AXIS_MIRRORED, {0}, {1}, 1};
+        }
+        // Tensor-parallel: weights split on axis 0 (hidden dim), activations MIRRORED
+        // Result is split on axis 0, same as the weight tensor.
+        if (src_ss[0].axis == GGML_BACKEND_SPLIT_AXIS_0 && src_ss[1].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED) {
+            return src_ss[0];
         }
         if (src_ss[0].axis == GGML_BACKEND_SPLIT_AXIS_1 && src_ss[1].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED) {
             ggml_backend_meta_split_state ret = src_ss[0];
@@ -1217,6 +1231,15 @@ static enum ggml_status ggml_backend_meta_buffer_init_tensor_impl(ggml_backend_m
                     nb[i] = tensor->nb[i] * ne[split_dim]/tensor->ne[split_dim];
                 }
             }
+            // For quantized types split along axis 0, linear stride scaling produces incorrect
+            // row strides that don't respect block alignment. This causes meta backend assertions
+            // to fail (e.g., ggml-backend-meta.cpp:1645 size % chunk_size_full == 0) when using
+            // turbo2_0/turbo3_0 KV cache with tensor-split mode.
+            // Fix: use ggml_row_size() which correctly accounts for quantization block boundaries.
+            // UnobligatedRascal
+            if (split_dim == 0 && ggml_blck_size(tensor->type) > 1) {
+                nb[1] = ggml_row_size(tensor->type, ne[0]);
+            }
         }
 
         ggml_tensor * t_ij = ggml_new_tensor(simple_ctx, tensor->type, GGML_MAX_DIMS, ne);
@@ -1544,7 +1567,21 @@ static void ggml_backend_meta_buffer_set_tensor(ggml_backend_buffer_t buffer, gg
 static void ggml_backend_meta_buffer_get_tensor(ggml_backend_buffer_t buffer, const ggml_tensor * tensor, void * data, size_t offset, size_t size) {
     const size_t n_bufs = ggml_backend_meta_buffer_n_bufs(buffer);
     const ggml_backend_meta_split_state split_state = ggml_backend_meta_get_split_state(tensor, /*assume_sync =*/ false);
-    GGML_ASSERT(ggml_is_contiguous(tensor) || split_state.axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED);
+    // Non-contiguous split tensors are not fully supported by the meta backend's get_tensor.
+    // The simple tensor strides become invalid after stride scaling in init_tensor for split
+    // dimensions. FA output is now made contiguous upstream in llama-graph.cpp before reshape.
+    // If this triggers, a new code path needs the same fix.
+    // Non-contiguous split tensors are not fully supported by the meta backend's get_tensor.
+    // The simple tensor strides become invalid after stride scaling in init_tensor for split
+    // dimensions. FA output is now made contiguous upstream in llama-graph.cpp before reshape.
+    // If this triggers, a new code path needs the same fix.
+    // Note: nr[0]=1 means all GPUs have the same data (effectively MIRRORED), so non-contiguous
+    // is fine in that case since each GPU reads from its own identical copy.
+    if (!ggml_is_contiguous(tensor) && split_state.axis >= 0 && split_state.axis < GGML_MAX_DIMS
+            && split_state.axis != GGML_BACKEND_SPLIT_AXIS_MIRRORED && split_state.nr[0] > 1) {
+        GGML_ABORT("non-contiguous split tensor not supported in meta backend get_tensor. "
+                   "A tensor was not made contiguous before splitting. Check the graph builder.");
+    }
 
     if (split_state.n_segments != 1 || split_state.nr[0] != 1) {
         GGML_ASSERT(split_state.axis >= 0 && split_state.axis < GGML_MAX_DIMS);

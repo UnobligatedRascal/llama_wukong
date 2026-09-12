@@ -994,7 +994,7 @@ static void test_all(const std::string & lang, std::function<void(const TestCase
             "additionalProperties": false
         })""",
         R"""(
-            root ::= "{" space "}"
+            root ::= "{" space  space "}"
             space ::= | " " | "\n"{1,2} [ \t]{0,20}
         )"""
     });
