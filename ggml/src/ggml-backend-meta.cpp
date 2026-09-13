@@ -1650,18 +1650,18 @@ static void ggml_backend_meta_buffer_get_tensor(ggml_backend_buffer_t buffer, co
         case GGML_BACKEND_SPLIT_AXIS_1:
         case GGML_BACKEND_SPLIT_AXIS_2: {
             // Exploit that tensors are contiguous to splice it with simple tensors as "chunks".
-            const size_t chunk_size_full = tensor->nb[split_state.axis + 1];
-            GGML_ASSERT(offset % chunk_size_full == 0);
-            // Diagnostic: if this fails, print tensor info for debugging
+            // When ne[axis+1] == 1, nb[axis+1] is meaningless (stride past last dim,
+            // often garbage from view/permute operations). Use tensor's actual size.
             // UnobligatedRascal
-            if (size % chunk_size_full != 0) {
-                GGML_PRINT_ERR("meta backend get_tensor failed: tensor='%s' type=%d blck=%d axis=%d "
-                    "ne=[%ld,%ld,%ld,%ld] nb=[%zu,%zu,%zu,%zu] offset=%zu size=%zu chunk_size_full=%zu\n",
-                    tensor->name, tensor->type, ggml_blck_size(tensor->type), split_state.axis,
-                    tensor->ne[0], tensor->ne[1], tensor->ne[2], tensor->ne[3],
-                    tensor->nb[0], tensor->nb[1], tensor->nb[2], tensor->nb[3],
-                    offset, size, chunk_size_full);
+            const int next_axis = split_state.axis + 1;
+            size_t chunk_size_full;
+            if (tensor->ne[next_axis] == 1) {
+                // Only one chunk along this axis; entire tensor is one chunk
+                chunk_size_full = ggml_nbytes(tensor);
+            } else {
+                chunk_size_full = tensor->nb[next_axis];
             }
+            GGML_ASSERT(offset % chunk_size_full == 0);
             GGML_ASSERT(size   % chunk_size_full == 0);
             const int64_t i_start =  offset        /chunk_size_full;
             const int64_t i_stop  = (offset + size)/chunk_size_full;
