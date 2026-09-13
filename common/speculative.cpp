@@ -2569,7 +2569,19 @@ common_speculative_init_result::common_speculative_init_result(
 
         LOG_INF("%s: creating MTP draft context against the target model '%s'\n", __func__, model_path.c_str());
 
-        llama_context * ctx_dft = llama_init_from_model(model_tgt, cparams);
+        // MTP-with-same-model: must load model again with NONE split mode.
+        // Reusing model_tgt would inherit TENSOR split mode, causing meta backend
+        // assertion failures in handle_per_row (RMS_NORM on axis-0-split tensors).
+        // The MTP head runs on a single GPU with full activations and full weights.
+        llama_model * model_mtp = llama_model_load_from_file(params.model.path.c_str(), mparams);
+        if (model_mtp == NULL) {
+            LOG_ERR("%s: failed to load MTP model '%s'\n", __func__, model_path.c_str());
+            return;
+        }
+
+        pimpl->model.reset(model_mtp);
+
+        llama_context * ctx_dft = llama_init_from_model(model_mtp, cparams);
         if (ctx_dft == nullptr) {
             LOG_ERR("%s: failed to create MTP context\n", __func__);
             return;

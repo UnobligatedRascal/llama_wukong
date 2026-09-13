@@ -61,8 +61,10 @@ W spec common_specu: backend offload failed for seq_id=0; using CPU sampler
 - **Fix 1 (commit 50fd7cfc3):** Removed blanket block — output layer is on single GPU, samplers can offload there.
 - **Root cause 2:** MTP draft context inherited TENSOR split mode, causing meta backend crash in `handle_per_row` (RMS_NORM on axis-0-split tensors).
 - **Fix 2 (commit 11c63fee5):** Force `LLAMA_SPLIT_MODE_NONE` for MTP draft context — MTP head runs on single GPU with full activations.
-- **Status:** Both fixes implemented. Awaiting user live testing.
-- **Test:** `--spec-type draft-mtp --split-mode tensor --tensor-split 1,1,1,1` — expect no crashes, GPU sampling active.
+- **Root cause 3 (DISCOVERED):** Fix 2 only applied when loading separate draft model (`has_draft` branch). MTP-with-same-model (`else if (spec_mtp)`) reused `model_tgt` directly, inheriting TENSOR split mode.
+- **Fix 3 (IN PROGRESS):** For MTP-with-same-model, load model a second time with NONE split mode. MTP head needs full weights on single GPU.
+- **Status:** Fix 3 applied in working tree. Requires rebuild + testing.
+- **Test:** `--spec-type draft-mtp --split-mode tensor --tensor-split 1,1,1,1,1,1,1,1` — expect no crashes, GPU sampling active.
 
 #### ✓ P0: Git fork hygiene (COMPLETE)
 
