@@ -57,9 +57,10 @@ W set_sampler: backend sampling not supported with SPLIT_MODE_TENSOR; using CPU
 W spec common_specu: backend offload failed for seq_id=0; using CPU sampler
 ```
 
-- Speculative decoding falls back to CPU sampler with tensor-split mode.
-- **Impact:** Speculative decoding still works but loses GPU acceleration for draft token sampling.
-- **Action:** Implement or enable GPU sampler support for SPLIT_MODE_TENSOR in backend.
+- **Root cause:** Overly conservative blanket block in `llama_context::set_sampler()` that unconditionally blocked backend sampling for SPLIT_MODE_TENSOR.
+- **Fix applied (commit 50fd7cfc3):** Removed the blanket block. Output layer in tensor-split is on a single GPU, so samplers can be offloaded there via `dev_output()`.
+- **Status:** Fix implemented and verified via static analysis. Awaiting user live testing.
+- **Test:** `--spec-type draft-mtp --split-mode tensor --tensor-split 1,1,1,1` — expect no "backend offload failed" warnings.
 
 #### ✓ P0: Git fork hygiene (COMPLETE)
 
