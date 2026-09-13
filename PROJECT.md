@@ -75,36 +75,46 @@ ggml/src/ggml-backend-meta.cpp:1645: GGML_ASSERT(size % chunk_size_full == 0) fa
 
 **Current backup:** main-backup branch preserves all current work.
 
-### Deferred / Pending
+### Deferred / Pending (priority order)
 
-- **P1:** Async pipeline re-implementation (rolled back 2026-09-08, malloc corruption). See ASYNC_PIPELINE_ATTEMPTED_CHANGES.md for root cause analysis. Re-impl notes: no lazy init during load, fix unreachable enable(), test NUMA first, no cudaSetDevice in constructors.
-- **P2:** FlashAttention/SWA feasibility on sm_37
-- **P2:** cuBLAS vs MMQ benchmarking
-- **P2:** TurboQuant runtime verification (blocked: GPUs in production)
+#### P0: TurboQuant/meta backend crash fix
 
-#### KV cache persistence & multi-backend improvements
+- **Status:** Broken. Server crashes at load with `ggml-backend-meta.cpp:1654: GGML_ASSERT(size % chunk_size_full == 0)`.
+- Commit 70481fa68 (stride scaling fix) was incomplete; assertion still hits under some turbo type + tensor-split combinations.
+- Blocks all TurboQuant usage; must be resolved before any KV cache optimization is viable.
 
-- **P1:** Multi-backend affinity routing with shared `--slot-save-path`
+#### P1: KV cache persistence & multi-backend improvements
+
+- **Multi-backend affinity routing with shared `--slot-save-path`**
   - Run 2+ llama-server instances (e.g. ports 4269/4270), each with its own GPU subset
   - Shared SSD directory for `--slot-save-path` enables cross-backend restore on affinity miss
   - Router (nginx or simple proxy) uses session ID / prefix hash → sticky backend
-  - Zero code changes required; purely operational
+  - Zero code changes required; purely operational. Can implement in parallel with P0.
 
-- **P1:** Incremental/delta disk snapshots
+- **Incremental/delta disk snapshots**
   - Store parent_checkpoint_hash + delta_tokens_since instead of full multi-GB slot saves
   - On restore: load parent checkpoint → apply delta; drops restore time from seconds to sub-second
   - Must respect TurboQuant block layout; cannot byte-copy arbitrary ranges
   - Requires changes to slot save/restore serialization (common/server, llama-context)
 
-- **P2:** Checkpoint-on-restore safety for hybrid/recurrent models
+#### P2: Lower priority / conditional
+
+- **Checkpoint-on-restore safety for hybrid/recurrent models**
   - After disk restore of a slot, force-create a tail checkpoint so next request can hit it
   - Prevents seq_rm failures that wipe state on hybrid models
   - Likely a config tweak or minimal patch
 
-- **P2:** TurboQuant-aware KV defragmentation (only if fragmentation issues observed)
+- **TurboQuant-aware KV defragmentation** (only if fragmentation issues observed)
   - Repeated surgery → fragmented KV cells → allocation failures or misaligned restores
   - Compact cells while preserving block alignment
   - Must work with tensor-split meta backend (fragile); defer until needed
+
+- **Async pipeline re-implementation** (rolled back 2026-09-08, malloc corruption)
+  - See ASYNC_PIPELINE_ATTEMPTED_CHANGES.md for root cause analysis
+  - Re-impl notes: no lazy init during load, fix unreachable enable(), test NUMA first, no cudaSetDevice in constructors
+
+- **FlashAttention/SWA feasibility on sm_37**
+- **cuBLAS vs MMQ benchmarking**
 
 ---
 
