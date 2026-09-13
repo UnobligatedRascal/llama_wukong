@@ -1231,14 +1231,15 @@ static enum ggml_status ggml_backend_meta_buffer_init_tensor_impl(ggml_backend_m
                     nb[i] = tensor->nb[i] * ne[split_dim]/tensor->ne[split_dim];
                 }
             }
-            // For quantized types split along axis 0, linear stride scaling produces incorrect
-            // row strides that don't respect block alignment. This causes meta backend assertions
-            // to fail (e.g., ggml-backend-meta.cpp:1645 size % chunk_size_full == 0) when using
-            // turbo2_0/turbo3_0 KV cache with tensor-split mode.
-            // Fix: use ggml_row_size() which correctly accounts for quantization block boundaries.
+            // For quantized types, linear stride scaling produces incorrect strides that don't
+            // respect block alignment. This causes meta backend assertions to fail when using
+            // turbo KV cache types with tensor-split mode.
+            // Fix: recompute strides from block-aligned sizes regardless of split axis.
             // UnobligatedRascal
-            if (split_dim == 0 && ggml_blck_size(tensor->type) > 1) {
+            if (ggml_blck_size(tensor->type) > 1) {
                 nb[1] = ggml_row_size(tensor->type, ne[0]);
+                if (ne[1] > 0) nb[2] = nb[1] * ne[1];
+                if (ne[2] > 0) nb[3] = nb[2] * ne[2];
             }
         }
 
@@ -1651,6 +1652,16 @@ static void ggml_backend_meta_buffer_get_tensor(ggml_backend_buffer_t buffer, co
             // Exploit that tensors are contiguous to splice it with simple tensors as "chunks".
             const size_t chunk_size_full = tensor->nb[split_state.axis + 1];
             GGML_ASSERT(offset % chunk_size_full == 0);
+            // Diagnostic: if this fails, print tensor info for debugging
+            // UnobligatedRascal
+            if (size % chunk_size_full != 0) {
+                GGML_PRINT_ERR("meta backend get_tensor failed: tensor='%s' type=%d blck=%d axis=%d "
+                    "ne=[%ld,%ld,%ld,%ld] nb=[%zu,%zu,%zu,%zu] offset=%zu size=%zu chunk_size_full=%zu\n",
+                    tensor->name, tensor->type, ggml_blck_size(tensor->type), split_state.axis,
+                    tensor->ne[0], tensor->ne[1], tensor->ne[2], tensor->ne[3],
+                    tensor->nb[0], tensor->nb[1], tensor->nb[2], tensor->nb[3],
+                    offset, size, chunk_size_full);
+            }
             GGML_ASSERT(size   % chunk_size_full == 0);
             const int64_t i_start =  offset        /chunk_size_full;
             const int64_t i_stop  = (offset + size)/chunk_size_full;
