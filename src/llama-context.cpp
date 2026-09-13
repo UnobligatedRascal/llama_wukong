@@ -1223,18 +1223,10 @@ bool llama_context::set_sampler(llama_seq_id seq_id, llama_sampler * sampler) {
 
     LLAMA_LOG_DEBUG("%s: seq_id = %d, sampler = %p\n", __func__, (int) seq_id, (void *) sampler);
 
-    if (sampler && model.split_mode() == LLAMA_SPLIT_MODE_TENSOR) {
-        static bool warned = false;
-        if (!warned) {
-            LLAMA_LOG_WARN("%s: backend sampling not supported with SPLIT_MODE_TENSOR; using CPU\n", __func__);
-            warned = true;
-        }
-        if (sampling.samplers.count(seq_id) > 0) {
-            sched_need_reserve = true;
-        }
-        sampling.samplers.erase(seq_id);
-        return false;
-    }
+    // Allow backend sampling with SPLIT_MODE_TENSOR — the output device is a single GPU,
+    // so samplers can be offloaded there. Previous blanket block was overly conservative;
+    // let backend_init fail gracefully if there are actual issues.
+    // UnobligatedRascal
 
     const bool can_offload =
         sampler &&
