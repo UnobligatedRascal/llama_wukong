@@ -57,10 +57,12 @@ W set_sampler: backend sampling not supported with SPLIT_MODE_TENSOR; using CPU
 W spec common_specu: backend offload failed for seq_id=0; using CPU sampler
 ```
 
-- **Root cause:** Overly conservative blanket block in `llama_context::set_sampler()` that unconditionally blocked backend sampling for SPLIT_MODE_TENSOR.
-- **Fix applied (commit 50fd7cfc3):** Removed the blanket block. Output layer in tensor-split is on a single GPU, so samplers can be offloaded there via `dev_output()`.
-- **Status:** Fix implemented and verified via static analysis. Awaiting user live testing.
-- **Test:** `--spec-type draft-mtp --split-mode tensor --tensor-split 1,1,1,1` — expect no "backend offload failed" warnings.
+- **Root cause 1:** Overly conservative blanket block in `llama_context::set_sampler()` blocking backend sampling for SPLIT_MODE_TENSOR.
+- **Fix 1 (commit 50fd7cfc3):** Removed blanket block — output layer is on single GPU, samplers can offload there.
+- **Root cause 2:** MTP draft context inherited TENSOR split mode, causing meta backend crash in `handle_per_row` (RMS_NORM on axis-0-split tensors).
+- **Fix 2 (commit 11c63fee5):** Force `LLAMA_SPLIT_MODE_NONE` for MTP draft context — MTP head runs on single GPU with full activations.
+- **Status:** Both fixes implemented. Awaiting user live testing.
+- **Test:** `--spec-type draft-mtp --split-mode tensor --tensor-split 1,1,1,1` — expect no crashes, GPU sampling active.
 
 #### ✓ P0: Git fork hygiene (COMPLETE)
 
