@@ -18,7 +18,7 @@
 
 ## Current Status
 
-**Verified working:** Tensor-split across all 8 GK210 GPUs, -np 2–6, Qwen3.6-27B Q4_K_M at 256K context with speculative decoding.
+**Verified working:** Tensor-split across all 8 GK210 GPUs, -np 2–6, Qwen3.6-27B Q4_K_M at 256K context.
 
 **Build:** Clean, branch main, working tree clean.
 
@@ -50,16 +50,15 @@ ggml/src/ggml-backend-meta.cpp:1645: GGML_ASSERT(size % chunk_size_full == 0) fa
 
 - Fixed and verified.
 
-#### P1: Speculative decoding backend offload failure
+#### Deferred: Speculative decoding with tensor-split mode
 
-```
-W set_sampler: backend sampling not supported with SPLIT_MODE_TENSOR; using CPU
-W spec common_specu: backend offload failed for seq_id=0; using CPU sampler
-```
-
-- Speculative decoding falls back to CPU sampler with tensor-split mode.
-- **Impact:** Speculative decoding still works but loses GPU acceleration for draft token sampling.
-- **Action:** Implement or enable GPU sampler support for SPLIT_MODE_TENSOR in backend.
+- **Status:** Abandoned after 3 failed fix attempts (commit 8f734f202 rolled back).
+- **Attempted fixes:**
+  1. Force NONE split mode for MTP draft context → incomplete, crash persisted
+  2. Load separate model with NONE split → OOM on GPU0 (full 27B model)
+  3. MIRRORED-only meta device for MTP → compile error (static function in function body)
+- **Root cause:** MTP draft contexts don't play well with tensor-split meta devices; per-row ops (RMS_NORM) need full rows but meta backend's split logic assigns axis-0 splits based on tensor name patterns.
+- **Action:** Deferred indefinitely. Speculative decoding with `--spec-type draft-mtp` + `--split-mode tensor` is unsupported. Use without tensor-split or without speculative decoding.
 
 #### ✓ P0: Git fork hygiene (COMPLETE)
 
@@ -122,7 +121,7 @@ sudo GGML_CUDA_P2P=1 -E nice -n -20 numactl --interleave=all \
   --batch-size 2048 --ubatch-size 512 \
   --cache-type-k turbo4_0 --cache-type-v turbo4_0 \
   --tensor-split 1,1,1,1,1,1,1,1 --kv-unified --slot-save-path /path/to/kv_cache \
-  --seed 1016 --spec-type draft-mtp --spec-draft-p-min 0.75 --spec-draft-n-max 3 \
+  --seed 1016
   --split-mode tensor
 ```
 
