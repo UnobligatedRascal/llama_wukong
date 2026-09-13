@@ -3674,6 +3674,71 @@ llama_context * llama_init_from_model(
         }
     }
 
+    // MTP draft context: must run with all tensors MIRRORED (single-GPU semantics)
+    // even when the target model uses tensor-split. The meta backend's get_split_state
+    // determines tensor splitting based on tensor names; for MTP we need everything
+    // MIRRORED to avoid handle_per_row assertions (RMS_NORM needs full rows).
+    // Fix: temporarily replace the model's meta device with one that uses a
+    // MIRRORED-only get_split_state callback, create the context, then restore.
+    // UnobligatedRascal
+    if (params.ctx_type == LLAMA_CONTEXT_TYPE_MTP && model->split_mode() == LLAMA_SPLIT_MODE_TENSOR) {
+        if (model->devices.size() != 1 || !model->devices[0].is_meta) {
+            LLAMA_LOG_ERROR("%s: MTP context requires model with meta device for tensor-split\n", __func__);
+            return nullptr;
+        }
+
+        // Find first CUDA GPU to use for MTP
+        ggml_backend_dev_t mtp_gpu = nullptr;
+        for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
+            ggml_backend_dev_t dev = ggml_backend_dev_get(i);
+            const char * name = ggml_backend_dev_name(dev);
+            if (name && strstr(name, "CUDA") && ggml_backend_dev_type(dev) == GGML_BACKEND_DEVICE_TYPE_GPU) {
+                mtp_gpu = dev;
+                break;
+            }
+        }
+        if (!mtp_gpu) {
+            // Fallback: first non-CPU device
+            for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
+                ggml_backend_dev_t dev = ggml_backend_dev_get(i);
+                if (ggml_backend_dev_type(dev) == GGML_BACKEND_DEVICE_TYPE_GPU) {
+                    mtp_gpu = dev;
+                    break;
+                }
+            }
+        }
+        if (!mtp_gpu) {
+            LLAMA_LOG_ERROR("%s: no GPU found for MTP context\n", __func__);
+            return nullptr;
+        }
+
+        // Save original device
+        llama_device orig_dev = model->devices[0];
+
+        // MIRRORED-only callback for MTP
+        static ggml_backend_meta_split_state mtp_mirrored_callback(
+            const struct ggml_tensor *, void *) {
+            return {GGML_BACKEND_SPLIT_AXIS_MIRRORED, {0}, {1}, 1};
+        }
+
+        // Create meta device with single GPU and MIRRORED callback
+        model->devices[0].is_meta = true;
+        model->devices[0].dev = ggml_backend_meta_device(&mtp_gpu, 1, mtp_mirrored_callback, nullptr);
+
+        try {
+            auto * ctx = new llama_context(*model, params);
+
+            // Restore original device immediately
+            model->devices[0] = orig_dev;
+
+            return ctx;
+        } catch (...) {
+            // Restore on failure
+            model->devices[0] = orig_dev;
+            throw;
+        }
+    }
+
     if ((model->hparams.is_mla() || model->arch == LLM_ARCH_DEEPSEEK4) && params.type_k != params.type_v) {
         LLAMA_LOG_ERROR("%s: model does not support different K (%s) and V (%s) cache types\n", __func__, ggml_type_name(params.type_k), ggml_type_name(params.type_v));
         return nullptr;
