@@ -2527,6 +2527,13 @@ common_speculative_init_result::common_speculative_init_result(
 
     if (spec_mtp) {
         cparams.ctx_type = LLAMA_CONTEXT_TYPE_MTP;
+        // MTP draft context must use NONE (single GPU) split mode.
+        // Tensor-split mode causes meta backend assertion failures in handle_per_row
+        // (e.g., RMS_NORM on tensors split along axis 0) because per-row operations
+        // need full activations, not split across GPUs.
+        // The MTP head runs on a single GPU with full activations.
+        // UnobligatedRascal
+        mparams.split_mode = LLAMA_SPLIT_MODE_NONE;
     }
 
     // the draft context holds as many tokens per sequence as the target context
