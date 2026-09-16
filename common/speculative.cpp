@@ -2527,6 +2527,13 @@ common_speculative_init_result::common_speculative_init_result(
 
     if (spec_mtp) {
         cparams.ctx_type = LLAMA_CONTEXT_TYPE_MTP;
+        // MTP draft context must use NONE (single GPU) split mode.
+        // Tensor-split mode causes meta backend assertion failures in handle_per_row
+        // (e.g., RMS_NORM on tensors split along axis 0) because per-row operations
+        // need full activations, not split across GPUs.
+        // The MTP head runs on a single GPU with full activations.
+        // UnobligatedRascal
+        mparams.split_mode = LLAMA_SPLIT_MODE_NONE;
     }
 
     // the draft context holds as many tokens per sequence as the target context
@@ -2562,6 +2569,9 @@ common_speculative_init_result::common_speculative_init_result(
 
         LOG_INF("%s: creating MTP draft context against the target model '%s'\n", __func__, model_path.c_str());
 
+        // MTP draft context runs on a single GPU with full activations.
+        // llama_init_from_model now handles split_mode override for MTP contexts
+        // internally (see llama-context.cpp).
         llama_context * ctx_dft = llama_init_from_model(model_tgt, cparams);
         if (ctx_dft == nullptr) {
             LOG_ERR("%s: failed to create MTP context\n", __func__);

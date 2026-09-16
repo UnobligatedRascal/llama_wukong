@@ -3,7 +3,7 @@
 > llama.cpp fork optimized for NVIDIA Kepler sm_37 (8x Tesla K80). Base: llama_lazarus → ggml-org/llama.cpp.
 > UnobligatedRascal — Making old hardware sing.
 
-**Last updated:** 2026-09-12 (turbo2_0/turbo3_0 meta backend fix applied)
+**Last updated:** 2026-09-16 (llama_lazarus rebased from llama.cpp main)
 
 ---
 
@@ -20,7 +20,7 @@
 
 **Verified working:** Tensor-split across all 8 GK210 GPUs, -np 2–6, Qwen3.6-27B Q4_K_M at 256K context.
 
-**Build:** Clean, branch main, working tree clean.
+**Build:** Clean, branch main-backup.
 
 ### Completed Features
 
@@ -46,34 +46,29 @@ ggml/src/ggml-backend-meta.cpp:1645: GGML_ASSERT(size % chunk_size_full == 0) fa
 - **Fix applied (commit 70481fa68):** For quantized types (blck_size > 1) split along axis 0, use `ggml_row_size(type, ne[0])` which correctly computes block-aligned row strides.
 - **Verified:** llama-server starts and runs with turbo2_0/turbo3_0/turbo4_0 KV cache + tensor-split without assertion failures.
 
-#### ✓ P0: KV cache quantization verification (COMPLETE)
-
-- Fixed and verified.
-
 #### Deferred: Speculative decoding with tensor-split mode
 
 - **Status:** Abandoned after 3 failed fix attempts (commit 8f734f202 rolled back).
-- **Attempted fixes:**
+- **Root cause:** MTP draft contexts don't play well with tensor-split meta devices; per-row ops (RMS_NORM) need full rows but meta backend's split logic assigns axis-0 splits based on tensor name patterns.
+- **Fix attempts:**
   1. Force NONE split mode for MTP draft context → incomplete, crash persisted
   2. Load separate model with NONE split → OOM on GPU0 (full 27B model)
   3. MIRRORED-only meta device for MTP → compile error (static function in function body)
-- **Root cause:** MTP draft contexts don't play well with tensor-split meta devices; per-row ops (RMS_NORM) need full rows but meta backend's split logic assigns axis-0 splits based on tensor name patterns.
 - **Action:** Deferred indefinitely. Speculative decoding with `--spec-type draft-mtp` + `--split-mode tensor` is unsupported. Use without tensor-split or without speculative decoding.
 
-#### ✓ P0: Git fork hygiene (COMPLETE)
+#### P0: Git fork hygiene (COMPLETE)
 
 - **Phase 1:** Synced llama_lazarus with ggml-org via PR #2 (merged)
 - **Phase 2:** Created clean llama_wukong fork — 1 commit on top of synced lazarus
 - origin/main now has clean ancestry: ggml-org/master → lazarus fixes → wukong features
 - Old messy history preserved as main-backup branch
+- llama_lazarus rebased from llama.cpp main (2026-09-16) — upstream latest features synced
 
 **Phase 2 (PENDING):** Create clean llama_wukong fork
 - After PR #1 merges, fetch updated upstream (llama_lazarus)
 - Create wukong from synced lazarus + wukong-specific commits (~25)
 - Script: scripts/create_clean_fork.sh (will need update after PR #1 merges)
 - Conflicts expected in: ggml-cuda.cu, ggml.h, llama-model.cpp, llama-graph.cpp, llama-kv-cache.cpp, llama-context.cpp, arg.cpp
-
-**Current backup:** main-backup branch preserves all current work.
 
 ### Deferred / Pending (priority order)
 
