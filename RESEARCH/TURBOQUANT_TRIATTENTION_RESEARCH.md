@@ -195,6 +195,6 @@ All three are synergistic: TurboQuant compresses KV, TriAttention prunes it, FA/
 
 ## 5. Cloned Repos (for reference)
 
-- `/home/whistler/turboquant_plus` — TheTom's research reference (Python)
-- `/home/whistler/llama-cpp-turboquant` — atomicmilkshake's llama.cpp fork (CUDA kernels)
-- `/home/whistler/triattention-ggml` — domvox's HIP/ROCm implementation (algorithm reference)
+- `turboquant_plus` — TheTom's research reference (Python)
+- `llama-cpp-turboquant` — atomicmilkshake's llama.cpp fork (CUDA kernels)
+- `triattention-ggml` — domvox's HIP/ROCm implementation (algorithm reference)
