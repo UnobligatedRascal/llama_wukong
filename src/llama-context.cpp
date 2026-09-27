@@ -3715,11 +3715,11 @@ llama_context * llama_init_from_model(
         // Save original device
         llama_device orig_dev = model->devices[0];
 
-        // MIRRORED-only callback for MTP
-        static ggml_backend_meta_split_state mtp_mirrored_callback(
-            const struct ggml_tensor *, void *) {
+        // MIRRORED-only callback for MTP (lambda wrapped as function pointer)
+        static auto mtp_mirrored_impl = [](const struct ggml_tensor *, void *) -> ggml_backend_meta_split_state {
             return {GGML_BACKEND_SPLIT_AXIS_MIRRORED, {0}, {1}, 1};
-        }
+        };
+        ggml_backend_meta_get_split_state_t mtp_mirrored_callback = mtp_mirrored_impl;
 
         // Create meta device with single GPU and MIRRORED callback
         model->devices[0].is_meta = true;
