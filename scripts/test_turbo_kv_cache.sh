@@ -4,7 +4,10 @@
 
 set -e
 
-LLAMA_SERVER="/home/whistler/llama_wukong/build-turbo-fix/bin/llama-server"
+# Use environment variables for paths - set LLAMA_WUKONG_HOME if needed
+LLAMA_WUKONG_HOME="${LLAMA_WUKONG_HOME:-${LLAMA_WUKONG_HOME}}"
+
+LLAMA_SERVER="${LLAMA_WUKONG_HOME}/build-turbo-fix/bin/llama-server"
 MODEL="/mnt/512gb_ssd/models/Qwen3.6-27B-Fable-Fus-711-UnHeretic-NM-DAU-NEO-MAX-NEO-MTP-Q4_K_M.gguf"
 MMPROJ="/mnt/512gb_ssd/models/Qwen3.6-27B-mmproj-F16.gguf"
 PORT=4280
@@ -33,7 +36,7 @@ test_cache_type() {
         $LLAMA_SERVER \
         -m "$MODEL" -t 36 -c 4096 -ngl 99 \
         --port $PORT --host 127.0.0.1 --api-key test \
-        --jinja --chat-template-file /home/whistler/models/tuvak.jinja \
+        --jinja --chat-template-file ${MODELS_HOME:-/home/whistler/models}/tuvak.jinja \
         --load-mode none -np 4 \
         --batch-size 512 --ubatch-size 256 \
         --cache-type-k "$CACHE_K" --cache-type-v "$CACHE_V" \

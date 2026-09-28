@@ -4,13 +4,16 @@
 #
 # Usage: ./bench_numa.sh [--model /path/to/model.gguf] [--threads N] [--prompt "text"]
 
-set -euo pipefail
+set -e
+
+# Use environment variables for paths - set LLAMA_WUKONG_HOME if needed
+LLAMA_WUKONG_HOME="${LLAMA_WUKONG_HOME:-${LLAMA_WUKONG_HOME}}"uo pipefail
 
 MODEL=""
 THREADS=36
 PROMPT="Write a Python function to compute the Fibonacci sequence using dynamic programming."
-SERVER_BIN="/home/whistler/llama_wukong/build/bin/llama-server"
-LOGDIR="/home/whistler/llama_wukong/bench_results"
+SERVER_BIN="${LLAMA_WUKONG_HOME}/build/bin/llama-server"
+LOGDIR="${LLAMA_WUKONG_HOME}/bench_results"
 DATE=$(date +%Y%m%d_%H%M%S)
 
 mkdir -p "$LOGDIR"

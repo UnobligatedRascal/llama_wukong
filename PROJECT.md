@@ -99,7 +99,7 @@ W spec common_specu: backend offload failed for seq_id=0; using CPU sampler
 ## Build
 
 ```bash
-cd /home/whistler/llama_wukong && rm -rf build && mkdir build && cd build
+cd <llama_wukong_root> && rm -rf build && mkdir build && cd build
 cmake .. \
   -DCMAKE_BUILD_TYPE=Release \
   -DGGML_CUDA=ON -DGGML_CUDA_F16=ON \
@@ -201,3 +201,4 @@ Use: `--cache-type-k turbo4_0 --cache-type-v turbo4_0`
 ---
 
 *UnobligatedRascal — Making old hardware sing.*
+

@@ -134,7 +134,7 @@ Priority order based on ROI and complexity.
 ### build_wukong.sh
 ```bash
 #!/bin/bash
-cd /home/whistler/llama_wukong
+cd <llama_wukong_root>
 rm -rf build && mkdir build && cd build
 
 cmake .. \
@@ -276,7 +276,7 @@ make -j36 llama-server llama-bench
 ### build_wukong.sh
 ```bash
 #!/bin/bash
-cd /home/whistler/llama_wukong
+cd <llama_wukong_root>
 rm -rf build && mkdir build && cd build
 
 cmake .. \
@@ -311,3 +311,4 @@ make -j36 llama-server llama-bench
 
 ---
 UnobligatedRascal
+

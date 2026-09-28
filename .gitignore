@@ -165,3 +165,50 @@ settings.txt
 *.key
 *.p12
 *.pfx
+
+# ============================================================
+# Security - Never commit these files
+# ============================================================
+
+# Environment files (except examples)
+.env
+.env.local
+.env.production
+.env.production.local
+.env.development
+!.env.example
+!.env.template
+
+# Private keys and certificates
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+*.jks
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+*.pub
+
+# Credentials
+credentials
+credentials.json
+secrets
+secrets.json
+service-account.json
+*.token
+
+# Git credentials
+.git-credentials
+.netrc
+.htpasswd
+
+# Database
+*.sqlite
+*.sqlite3
+
+# SSH
+known_hosts
+authorized_keys

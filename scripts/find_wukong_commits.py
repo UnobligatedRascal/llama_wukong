@@ -11,7 +11,7 @@ import subprocess
 import re
 
 def run_git(args):
-    result = subprocess.run(['git'] + args, capture_output=True, text=True, cwd='/home/whistler/llama_wukong')
+    result = subprocess.run(['git'] + args, capture_output=True, text=True, cwd='${LLAMA_WUKONG_HOME}')
     return result.stdout.strip()
 
 # Get all commits from main-backup
