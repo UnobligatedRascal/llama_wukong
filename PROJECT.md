@@ -98,24 +98,40 @@ W spec common_specu: backend offload failed for seq_id=0; using CPU sampler
 
 ## Build
 
+Run from project ROOT directory (NOT build directory). Canonical command also in double-vision/UNOB.md.
+
 ```bash
-cd /home/whistler/llama_wukong && rm -rf build && mkdir build && cd build
-cmake .. \
+cd /home/whistler/llama_wukong && cmake -B build \
   -DCMAKE_BUILD_TYPE=Release \
-  -DGGML_CUDA=ON -DGGML_CUDA_F16=ON \
-  -DCMAKE_CUDA_HOST_COMPILER=g++-11 \
+  -DGGML_CUDA=ON \
+  -DGGML_SCHED_MAX_COPIES=1 \
+  -DGGML_CUDA_NCCL=ON \
+  -DGGML_CUDA_FA_ALL_QUANTS=ON \
+  -DGGML_CUDA_FORCE_MMQ=ON \
+  -DGGML_CUDA_FA=ON \
+  -DGGML_CUDA_GRAPHS=OFF \
+  -DCMAKE_CUDA_ARCHITECTURES="37" \
   -DCMAKE_CUDA_COMPILER=/usr/local/cuda-11.8/bin/nvcc \
-  -DGGML_CUDA_NCCL=ON -DCMAKE_CUDA_ARCHITECTURES="37" \
-  -DGGML_CUDA_FA_ALL_QUANTS=ON -DGGML_CUDA_FORCE_MMQ=ON -DGGML_CUDA_GRAPHS=OFF \
-  -DCMAKE_C_COMPILER=gcc-11 -DCMAKE_CXX_COMPILER=g++-11 \
-  -DGGML_CUDA_CUBLAS=ON \
-  -DCMAKE_C_FLAGS="-DGGML_NUMA_REPLICATE" \
-  -DCMAKE_CXX_FLAGS="-DGGML_NUMA_REPLICATE" \
-  -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-rpath,/usr/local/cuda-11.8/targets/x86_64-linux/lib"
-make -j36 llama-server llama-bench
+  -DGGML_CUDA_PEER_MAX_BATCH_SIZE=64 \
+  -DCMAKE_CUDA_HOST_COMPILER=g++-11 \
+  -DCMAKE_C_COMPILER=gcc-11 \
+  -DCMAKE_CXX_COMPILER=g++-11 \
+  -DGGML_AVX2=ON \
+  -DGGML_AVX512=OFF \
+  -DGGML_FMA=ON \
+  -DGGML_F16C=ON \
+  -DGGML_SSE42=ON \
+  -DGGML_BMI2=ON \
+  -DGGML_NATIVE=OFF \
+  -DGGML_OPENMP=ON \
+  -DLLAMA_CURL=OFF \
+  -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-rpath,/usr/local/cuda-11.8/targets/x86_64-linux/lib" \
+  -DGGML_CUDA_CUBLAS=ON && cmake --build build --config Release -j$(nproc)
 ```
 
-Disable NUMA at runtime: `GGML_NUMA_REPLICATE=0 ./build/bin/llama-server ...`
+NUMA replicate is built-in via `-DGGML_NUMA_REPLICATE` flags or runtime env:
+- Enable: default (compile with `-DCMAKE_C_FLAGS="-DGGML_NUMA_REPLICATE"`)
+- Disable: `GGML_NUMA_REPLICATE=0 ./build/bin/llama-server ...`
 
 ---
 
