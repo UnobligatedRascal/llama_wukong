@@ -8,11 +8,14 @@
 #
 # Output: test_logs/rope_lut_YYYYMMDD_HHMMSS/ with per-test logs and summary
 
-set -euo pipefail
+set -e
 
-PROJ="/home/whistler/llama_wukong"
+# Use environment variables for paths - set LLAMA_WUKONG_HOME if needed
+LLAMA_WUKONG_HOME="${LLAMA_WUKONG_HOME:-${LLAMA_WUKONG_HOME}}"uo pipefail
+
+PROJ="${LLAMA_WUKONG_HOME}"
 MODEL="/mnt/512gb_ssd/models/Qwen3.6-27B-Fable-Fus-711-UnHeretic-NM-DAU-NEO-MAX-NEO-MTP-Q4_K_M.gguf"
-TEMPLATE="/home/whistler/models/tuvak.jinja"
+TEMPLATE="${MODELS_HOME:-/home/whistler/models}/tuvak.jinja"
 API_KEY="YOUR_API_KEY_HERE"
 BUILD_DIR="$PROJ/build"
 LOG_DIR="$PROJ/test_logs/rope_lut_$(date +%Y%m%d_%H%M%S)"

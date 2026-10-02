@@ -101,7 +101,7 @@ W spec common_specu: backend offload failed for seq_id=0; using CPU sampler
 Run from project ROOT directory (NOT build directory). Canonical command also in double-vision/UNOB.md.
 
 ```bash
-cd /home/whistler/llama_wukong && cmake -B build \
+cd /home/whistler/llama_wukong && cmake -B build \\
   -DCMAKE_BUILD_TYPE=Release \
   -DGGML_CUDA=ON \
   -DGGML_SCHED_MAX_COPIES=1 \
@@ -217,3 +217,4 @@ Use: `--cache-type-k turbo4_0 --cache-type-v turbo4_0`
 ---
 
 *UnobligatedRascal — Making old hardware sing.*
+

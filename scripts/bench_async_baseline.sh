@@ -1,19 +1,22 @@
 #!/bin/bash
 # Profile current baseline: compute/transfer patterns, NCCL sync, GPU utilization
 # Run BEFORE any async pipeline changes
-# Saves outputs to /home/whistler/llama_wukong/benches/nought-baseline/
+# Saves outputs to ${LLAMA_WUKONG_HOME}/benches/nought-baseline/
 
 set -e
 
-OUTDIR="/home/whistler/llama_wukong/benches/nought-baseline"
+# Use environment variables for paths - set LLAMA_WUKONG_HOME if needed
+LLAMA_WUKONG_HOME="${LLAMA_WUKONG_HOME:-${LLAMA_WUKONG_HOME}}"
+
+OUTDIR="${LLAMA_WUKONG_HOME}/benches/nought-baseline"
 mkdir -p "$OUTDIR"
 echo "=== Baseline Profile ==="
 echo "Output: $OUTDIR"
 
 MODEL="/mnt/512gb_ssd/models/Qwen3.6-27B-Fable-Fus-711-UnHeretic-NM-DAU-NEO-MAX-NEO-MTP-Q4_K_M.gguf"
 MMPROJ="/mnt/512gb_ssd/models/Qwen3.6-27B-mmproj-F16.gguf"
-SERVER="/home/whistler/llama_wukong/build/bin/llama-server"
-BENCH="/home/whistler/llama_wukong/build/bin/llama-bench"
+SERVER="${LLAMA_WUKONG_HOME}/build/bin/llama-server"
+BENCH="${LLAMA_WUKONG_HOME}/build/bin/llama-bench"
 
 echo ""
 echo "=== Step 1: llama-bench baseline (8-GPU tensor split, 3 slots) ==="
