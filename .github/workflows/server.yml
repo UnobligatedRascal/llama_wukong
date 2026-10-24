@@ -43,6 +43,10 @@ on:
       'tools/server/**.*'
     ]
 
+cache-mode: none
+permissions:
+  contents: read
+
 env:
   LLAMA_ARG_LOG_COLORS: 1
   LLAMA_ARG_LOG_PREFIX: 1
@@ -82,9 +86,23 @@ jobs:
       - name: ccache
         uses: ggml-org/ccache-action@v1.2.21
         with:
+<<<<<<< HEAD
           key: server-ubuntu-24.04-arm
           evict-old-files: 1d
           save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+=======
+          restore: false
+          save: false
+
+      - name: ccache-buckets-restore
+        uses: ./.github/actions/ccache-buckets
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN_CI }}
+        with:
+          key: server-ubuntu-24.04-arm
+          folder: llama.cpp
+          hf_bucket: ggml-org/cache
+>>>>>>> ggml-org/master
 
       - name: Build
         id: cmake_build
@@ -140,6 +158,11 @@ jobs:
 
   windows:
     runs-on: windows-2025
+
+    cache-mode: write
+    permissions:
+      actions: write
+      contents: read
 
     steps:
       - name: Clone

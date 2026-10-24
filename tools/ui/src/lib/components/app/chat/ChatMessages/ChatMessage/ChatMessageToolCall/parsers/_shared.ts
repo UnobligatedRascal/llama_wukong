@@ -1,9 +1,17 @@
 // Helpers shared by the per-tool meta parsers under
 // `src/lib/components/app/chat/ChatMessages/ChatMessage/ChatMessageToolCall/parsers/`.
 // Each tool needs the same first three steps (tool-name check,
-// args-present check, JSON parse) - keeping them here lets each parser
-// stay focused on its own format quirks.
+// args-present check, JSON parse), plus the same path aliases - keeping
+// them here lets each parser stay focused on its own format quirks.
 
+<<<<<<< HEAD
+=======
+import {
+	FILE_PATH_SEPARATOR_REGEX,
+	TOOL_ARG_PATH_KEYS,
+	TOOL_ARG_STRING_FIELD_PATTERN_TEMPLATE
+} from '$lib/constants';
+>>>>>>> ggml-org/master
 import { BuiltInTool } from '$lib/enums';
 import type { AgenticSection } from '$lib/types/agentic';
 import { parsePartialJsonArgs } from '$lib/utils/parse-partial-json-args';
@@ -26,6 +34,34 @@ function parseFinalToolArgs(blob: string): Record<string, unknown> | null {
 	} catch {
 		return null;
 	}
+}
+
+/**
+ * File name shown in a block title, from a tool-call path. Undefined when
+ * the call carries no path; the title then shows the tool label alone.
+ */
+export function fileNameFromPath(filePath: string | undefined): string | undefined {
+	if (!filePath) return undefined;
+
+	return filePath.split(FILE_PATH_SEPARATOR_REGEX).pop() || filePath;
+}
+
+/**
+ * Read the path argument out of an already parsed args object, checking
+ * the aliases in `TOOL_ARG_PATH_KEYS`. Returns undefined when the call
+ * carries no usable path - the path is display-only, so callers must
+ * still render whatever else the call streamed.
+ */
+export function extractToolArgPath(args?: Record<string, unknown> | null): string | undefined {
+	if (!args) return undefined;
+
+	for (const key of TOOL_ARG_PATH_KEYS) {
+		const value = args[key];
+
+		if (typeof value === 'string' && value) return value;
+	}
+
+	return undefined;
 }
 
 /**

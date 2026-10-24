@@ -25,6 +25,10 @@ on:
       'scripts/hip/gcn-cdna-vgpr-check.py'
     ]
 
+cache-mode: none
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref && github.ref || github.run_id }}
   cancel-in-progress: true
@@ -54,9 +58,23 @@ jobs:
       - name: ccache
         uses: ggml-org/ccache-action@v1.2.21
         with:
+<<<<<<< HEAD
           key: hip-quality-check-ubuntu-22.04
           evict-old-files: 1d
           save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+=======
+          restore: false
+          save: false
+
+      - name: ccache-buckets-restore
+        uses: ./.github/actions/ccache-buckets
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN_CI }}
+        with:
+          key: hip-quality-check-ubuntu-22.04
+          folder: llama.cpp
+          hf_bucket: ggml-org/cache
+>>>>>>> ggml-org/master
 
       - name: Build with Werror
         id: cmake_build

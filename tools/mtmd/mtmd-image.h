@@ -31,6 +31,7 @@ struct mtmd_image_preprocessor {
     const clip_hparams & hparams;
 
     mtmd_image_preprocessor(const clip_ctx * ctx): hparams(*clip_get_hparams(ctx)) {}
+    mtmd_image_preprocessor(const clip_hparams & hparams): hparams(hparams) {}
 
     virtual ~mtmd_image_preprocessor() = default;
     virtual mtmd_image_preproc_out preprocess(const clip_image_u8 & img) = 0;
@@ -59,7 +60,12 @@ struct mtmd_image_preprocessor {
  */
 struct mtmd_image_preprocessor_llava_uhd : mtmd_image_preprocessor {
     mtmd_image_preprocessor_llava_uhd(const clip_ctx * ctx) : mtmd_image_preprocessor(ctx) {}
+<<<<<<< HEAD
     mtmd_image_preproc_out preprocess(const clip_image_u8 & img) override;
+=======
+    mtmd_image_preprocessor_llava_uhd(const clip_hparams & hparams) : mtmd_image_preprocessor(hparams) {}
+    mtmd_image_preproc_out preprocess(const clip_image_u8 & img) const override;
+>>>>>>> ggml-org/master
 
     struct slice_coordinates {
         int x;
@@ -83,7 +89,22 @@ struct mtmd_image_preprocessor_llava_uhd : mtmd_image_preprocessor {
     slice_output slice_image(const clip_image_u8 & img, const slice_instructions & inst);
 
 protected:
+<<<<<<< HEAD
     clip_image_size get_best_resize(const clip_image_size & original_size, int scale_resolution, int patch_size, bool allow_upscale = false);
+=======
+    // align slices to a multiple of the merger factor (integer merger tokens per slice)
+    virtual int get_slice_align() const {
+        const int merge = hparams.n_merge > 0 ? hparams.n_merge : 1;
+        return hparams.patch_size * merge;
+    }
+
+    // rounding for snapping a length to a multiple of the align size
+    virtual int align_round(double v) const {
+        return static_cast<int>(std::round(v));
+    }
+
+    clip_image_size get_best_resize(const clip_image_size & original_size, int scale_resolution, int patch_size, bool allow_upscale = false) const;
+>>>>>>> ggml-org/master
 
     /**
      * Selects the best resolution from a list of possible resolutions based on the original size.
@@ -120,43 +141,112 @@ struct mtmd_image_preprocessor_fixed_size : mtmd_image_preprocessor {
 // this is used by models with native support for dynamic image size, for example: Qwen-VL, Pixtral, Kimi-VL, etc
 struct mtmd_image_preprocessor_dyn_size : mtmd_image_preprocessor {
     mtmd_image_preprocessor_dyn_size(const clip_ctx * ctx) : mtmd_image_preprocessor(ctx) {}
+<<<<<<< HEAD
     mtmd_image_preproc_out preprocess(const clip_image_u8 & img) override;
+=======
+    static clip_image_size get_target_size(const clip_hparams & hparams, const clip_image_size & original_size);
+    mtmd_image_preproc_out preprocess(const clip_image_u8 & img) const override;
+>>>>>>> ggml-org/master
 };
 
-// similar to mtmd_image_preprocessor_dyn_size, but resize the image to have longest edge equal to hparams.image_longest_edge, while preserving aspect ratio
+// GLM 5.3 flash, similar to dyn_size, but each edge is aligned up to patch_size*n_merge, and max budget is met by a search over the height with the width scaled proportionally
+struct mtmd_image_preprocessor_glm5v : mtmd_image_preprocessor {
+    mtmd_image_preprocessor_glm5v(const clip_ctx * ctx) : mtmd_image_preprocessor(ctx) {}
+    mtmd_image_preproc_out preprocess(const clip_image_u8 & img) const override;
+};
+
+// similar to mtmd_image_preprocessor_dyn_size, but cap the longest edge at hparams.image_longest_edge, while preserving aspect ratio
 struct mtmd_image_preprocessor_longest_edge : mtmd_image_preprocessor {
     mtmd_image_preprocessor_longest_edge(const clip_ctx * ctx) : mtmd_image_preprocessor(ctx) {}
+<<<<<<< HEAD
     mtmd_image_preproc_out preprocess(const clip_image_u8 & img) override;
+=======
+    static clip_image_size get_target_size(const clip_hparams & hparams, const clip_image_size & original_size);
+    mtmd_image_preproc_out preprocess(const clip_image_u8 & img) const override;
+};
+
+// ref: inference/image_processor.py in the HF repo (DeepSeek-V4-Flash-Vision)
+struct mtmd_image_preprocessor_deepseek4v : mtmd_image_preprocessor {
+    mtmd_image_preprocessor_deepseek4v(const clip_ctx * ctx) : mtmd_image_preprocessor(ctx) {}
+    mtmd_image_preproc_out preprocess(const clip_image_u8 & img) const override;
+
+private:
+    struct grid_info {
+        int n_llm_h;
+        int n_llm_w;
+        int n_tokens; // token count of the block (incl. newline/pad rows and start/end, excl. lead pads)
+    };
+    static grid_info grid_tokens(int best_height, int best_width, int patch_size, int r);
+    static void solve_resize_ratio(int height, int width, int p, int r, int max_n_token, int & best_height, int & best_width);
+    static void safe_resize(int height, int width, int & best_height, int & best_width, int p, int r, int max_n_token);
+>>>>>>> ggml-org/master
 };
 
 // custom llava-uhd slicing logic for MiniCPM-V
 struct mtmd_image_preprocessor_minicpmv : mtmd_image_preprocessor_llava_uhd {
     using mtmd_image_preprocessor_llava_uhd::mtmd_image_preprocessor_llava_uhd;
+<<<<<<< HEAD
     slice_instructions get_slice_instructions(const clip_image_size & original_size) override;
+=======
+    slice_instructions get_slice_instructions(const clip_image_size & original_size) const override;
+
+protected:
+    // always patch_size * 4, even in 4x mode (the 2x2 vit_merger slot stays)
+    int get_slice_align() const override {
+        return hparams.patch_size * 4;
+    }
+
+    // Python's round() breaks ties to even, unlike std::round
+    int align_round(double v) const override {
+        const double fl = std::floor(v);
+        const double diff = v - fl;
+        if (diff > 0.5) {
+            return static_cast<int>(fl) + 1;
+        }
+        if (diff < 0.5) {
+            return static_cast<int>(fl);
+        }
+        const int lo = static_cast<int>(fl);
+        return (lo % 2 == 0) ? lo : lo + 1;
+    }
+};
+
+// MiniCPM-OCR 1.0: find_best_resize aligns to patch_size * n_merge (28 in 4x).
+struct mtmd_image_preprocessor_minicpm_ocr_1_0 : mtmd_image_preprocessor_minicpmv {
+    using mtmd_image_preprocessor_minicpmv::mtmd_image_preprocessor_minicpmv;
+
+protected:
+    int get_slice_align() const override {
+        const int merge = hparams.n_merge > 0 ? hparams.n_merge : 2;
+        return hparams.patch_size * merge;
+    }
+>>>>>>> ggml-org/master
 };
 
 // custom llava-uhd slicing logic for LFM2
+// tiling params (min/max tiles, tile size, pixels tolerance) come from hparams
 // ref: https://github.com/huggingface/transformers/blob/v5.1.0/src/transformers/models/lfm2_vl/image_processing_lfm2_vl_fast.py
 struct mtmd_image_preprocessor_lfm2 : mtmd_image_preprocessor_llava_uhd {
-    // ref: https://huggingface.co/LiquidAI/LFM2.5-VL-1.6B/blob/main/processor_config.json
-    static constexpr int   min_tiles            = 2;
-    static constexpr int   max_tiles            = 10;
-    static constexpr float max_pixels_tolerance = 2.0f;
-    static constexpr int   tile_size            = 512;
-
     using mtmd_image_preprocessor_llava_uhd::mtmd_image_preprocessor_llava_uhd;
     mtmd_image_preproc_out preprocess(const clip_image_u8 & img) override;
     slice_instructions get_slice_instructions(const clip_image_size & original_size) override;
 
     static bool should_tile(const clip_hparams & hparams, const clip_image_size & original_size);
+    static clip_image_size smart_resize(const clip_hparams & hparams, const clip_image_size & original_size);
+    static clip_image_size get_grid_layout(const clip_hparams & hparams, int height, int width);
 
 private:
-    clip_image_size find_closest_aspect_ratio(
-            float aspect_ratio,
+    static clip_image_size find_closest_aspect_ratio(
+            const clip_hparams & hparams,
+            double aspect_ratio,
             const std::vector<clip_image_size> & target_ratios,
             int width, int height);
+<<<<<<< HEAD
     std::vector<clip_image_size> get_target_ratios();
     clip_image_size get_grid_layout(int height, int width);
+=======
+    static std::vector<clip_image_size> get_target_ratios(const clip_hparams & hparams);
+>>>>>>> ggml-org/master
 };
 
 struct mtmd_image_preprocessor_idefics3 : mtmd_image_preprocessor_llava_uhd {
@@ -167,6 +257,14 @@ struct mtmd_image_preprocessor_idefics3 : mtmd_image_preprocessor_llava_uhd {
 struct mtmd_image_preprocessor_internvl : mtmd_image_preprocessor_llava_uhd {
     mtmd_image_preprocessor_internvl(const clip_ctx * ctx) : mtmd_image_preprocessor_llava_uhd(ctx) {}
     mtmd_image_preproc_out preprocess(const clip_image_u8 & img) override;
+};
+
+// stretch the image to a grid of tiles, add a thumbnail if there is more than 1 tile
+// ref: https://github.com/huggingface/transformers/blob/main/src/transformers/models/cohere2_vision/image_processing_cohere2_vision.py
+struct mtmd_image_preprocessor_cohere2v : mtmd_image_preprocessor_llava_uhd {
+    mtmd_image_preprocessor_cohere2v(const clip_ctx * ctx) : mtmd_image_preprocessor_llava_uhd(ctx) {}
+    mtmd_image_preproc_out preprocess(const clip_image_u8 & img) const override;
+    slice_instructions get_slice_instructions(const clip_image_size & original_size) const override;
 };
 
 // DeepSeek-OCR (v1/v2) global view + optional local tile grid

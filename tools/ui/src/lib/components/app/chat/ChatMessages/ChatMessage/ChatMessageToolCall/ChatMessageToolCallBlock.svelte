@@ -18,13 +18,15 @@
 	interface Props {
 		section: AgenticSection;
 		attachments?: DatabaseMessageExtra[];
+		conversationCwd?: string;
 		open: boolean;
 		isStreaming: boolean;
 		isExecuting?: boolean;
 		onToggle?: () => void;
 	}
 
-	let { attachments, isExecuting, isStreaming, onToggle, open, section }: Props = $props();
+	let { attachments, conversationCwd, isExecuting, isStreaming, onToggle, open, section }: Props =
+		$props();
 
 	const searchResults = $derived(extractSearchResults(section.toolResult));
 	const searchQuery = $derived(extractSearchQuery(section.toolArgs));
@@ -38,7 +40,7 @@
 {:else if section.toolName === BuiltInTool.BROWSER_GET_DATETIME}
 	<ChatMessageToolCallBlockGetDatetime {isStreaming} {section} />
 {:else if section.toolName === BuiltInTool.SERVER_GET_INFO}
-	<ChatMessageToolCallBlockGetInfo {isStreaming} {section} />
+	<ChatMessageToolCallBlockGetInfo {isStreaming} {onToggle} {open} {section} />
 {:else if section.toolName === BuiltInTool.SERVER_READ_FILE}
 	<ChatMessageToolCallBlockReadFile {isStreaming} {onToggle} {open} {section} />
 {:else if section.toolName === BuiltInTool.BROWSER_READ_MEDIA}
@@ -50,6 +52,7 @@
 {:else if section.toolName === BuiltInTool.SERVER_EXEC_SHELL_COMMAND}
 	<ChatMessageToolCallBlockExecShellCommand
 		{attachments}
+		{conversationCwd}
 		{isExecuting}
 		{isStreaming}
 		{onToggle}

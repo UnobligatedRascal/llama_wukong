@@ -33,6 +33,10 @@ on:
       'ggml/src/ggml-webgpu/wgsl-shaders/embed_wgsl.py'
     ]
 
+cache-mode: none
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref && github.ref || github.run_id }}
   cancel-in-progress: true
@@ -56,9 +60,14 @@ jobs:
       - name: ccache
         uses: ggml-org/ccache-action@v1.2.21
         with:
+<<<<<<< HEAD
           key: webgpu-ubuntu-24.04-arm-wasm
           evict-old-files: 1d
           save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+=======
+          restore: false
+          save: false
+>>>>>>> ggml-org/master
 
       - name: Install Emscripten
         run: |

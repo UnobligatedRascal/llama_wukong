@@ -9,7 +9,7 @@
 #include <string.h>
 #include <stdlib.h>
 
-#include "hex-dma.h"
+#include "dma-queue.h"
 #include "hvx-utils.h"
 #include "hex-fastdiv.h"
 
@@ -84,7 +84,11 @@ struct htp_rope_context {
     struct fastdiv_values div_ne2_ne1;
     struct fastdiv_values div_ne1;
 
+<<<<<<< HEAD
     uint64_t t_start;
+=======
+    const float * freq_factors;
+>>>>>>> ggml-org/master
 };
 
 static float rope_yarn_ramp(const float low, const float high, const int i0) {
@@ -490,9 +494,16 @@ static void rope_job_f32(unsigned int nth, unsigned int ith, void * data) {
               src0_spad_base = src0_spad_base + rctx->theta_cache_offset;
     uint8_t * dst_spad_base  = octx->dst_spad.data + (ith * octx->dst_spad.size_per_thread);
 
+<<<<<<< HEAD
     dma_queue * dma_queue = octx->ctx->dma[ith];
     const int32_t * pos = (const int32_t *) src1->data;
     const float * freq_factors = src2 ? (const float *) src2->data : NULL;
+=======
+    dma_queue * dma_q = octx->ctx->dma[ith];
+    struct htp_thread_trace * tr = &octx->ctx->trace[ith];
+    const int32_t * pos = (const int32_t *) (uintptr_t) src1->data;
+    const float * freq_factors = rctx->freq_factors;
+>>>>>>> ggml-org/master
 
     const uint32_t i3_start = fastdiv(src0_start_row, &rctx->div_ne2_ne1);
     const uint32_t rem      = fastmodulo(src0_start_row, ne2 * ne1, &rctx->div_ne2_ne1);
@@ -513,6 +524,7 @@ static void rope_job_f32(unsigned int nth, unsigned int ith, void * data) {
                 const uint32_t nrows = MIN(src0_end_row - ir, ne1 - i1);
 
                 // Depth before prefetch
+<<<<<<< HEAD
                 uint32_t dma_depth = dma_queue_depth(dma_queue);
 
                 // FARF(HIGH, "rope-block %u: ir %u n-rows %u dma-depth %u : usec %u", ith, ir, nrows, dma_depth,
@@ -533,6 +545,22 @@ static void rope_job_f32(unsigned int nth, unsigned int ith, void * data) {
 
                     // Copy only the row payload while striding the DDR source
                     dma_queue_push(dma_queue, dma_make_ptr(src_spad, src_addr),
+=======
+                const uint32_t dma_depth = dma_queue_depth(dma_q);
+
+                // Prefetch up to 2 blocks
+                const uint32_t p_nrows = MIN(nrows, 2 * HTP_ROPE_SPAD_BLOCK);
+                for (uint32_t pr = 0; pr < p_nrows; pr += HTP_ROPE_SPAD_BLOCK) {
+                    const uint32_t pnr = MIN(nrows - pr, HTP_ROPE_SPAD_BLOCK);
+                    const uint32_t slot = (cur_slot + pr / HTP_ROPE_SPAD_BLOCK) % HTP_ROPE_SPAD_NSLOTS;
+                    uint8_t * spad_slot = rope_spad_slot(src0_spad_base, slot, rctx->src0_row_size_aligned);
+                    const dma_addr_t src0_data = src0->data + i3 * nb03 + i2 * nb02 + (i1 + pr) * nb01;
+
+                    // Dummy DMA transaction for sequencing (interleaving wr, rd, wr, rd, ...)
+                    dma_queue_push(dma_q, dma_make_data(dst->data, spad_slot), 0, 0, 0, 0);
+
+                    dma_queue_push(dma_q, dma_make_data(spad_slot, src0_data),
+>>>>>>> ggml-org/master
                         rctx->src0_row_size_aligned, rctx->src0_row_stride, rctx->src0_row_size, pnr);
 
                     // FARF(HIGH, "rope-prefetch %u: pr %u i1 %u i2 %u i3 %u src-spad %p src-addr %p pnr %u", ith, pir, pi1, i2, i3, src_spad, src_addr, pnr);
@@ -564,16 +592,25 @@ static void rope_job_f32(unsigned int nth, unsigned int ith, void * data) {
                 }
 
                 // Skip output DMA transactions from prev block (if any)
+<<<<<<< HEAD
                 // No need to wait for those here since we're explicitly waiting for the latest prefecthes below.
                 for (uint32_t d=0; d < dma_depth; d++) { dma_queue_pop_nowait(dma_queue); }
+=======
+                for (uint32_t d = 0; d < dma_depth; d++) { dma_queue_pop_nowait(dma_q); }
+>>>>>>> ggml-org/master
 
                 // Compute loop
                 for (uint32_t cnr = 0, cr = 0; cr < nrows; cr += cnr, ir += cnr, i1 += cnr) {
                     // Number of rows to compute
                     cnr = MIN(nrows - cr, HTP_ROPE_SPAD_BLOCK);
 
+<<<<<<< HEAD
                     uint8_t * dst_spad = (uint8_t *) dma_queue_pop(dma_queue).src;
                     uint8_t * src_spad = (uint8_t *) dma_queue_pop(dma_queue).dst;
+=======
+                    dma_queue_pop(dma_q);
+                    uint8_t * cur_spad = (uint8_t *) dma_queue_pop(dma_q).dst;
+>>>>>>> ggml-org/master
 
                     // FARF(HIGH, "rope-compute %u: ir %u i1 %u i2 %u i3 %u src-spad %p cnr %u : usec %u", ith, ir, i1, i2, i3, src_spad, cnr,
                     //         (unsigned) HAP_perf_qtimer_count_to_us(HAP_perf_get_qtimer_count() - rctx->t_start));
@@ -586,6 +623,7 @@ static void rope_job_f32(unsigned int nth, unsigned int ith, void * data) {
                         rope_basic_f32(rctx, dst_spad, src_spad, cnr, ne0, theta_cache);
                     }
 
+<<<<<<< HEAD
                     uint8_t * dst_addr = (uint8_t *) dst->data + i3 * nb3 + i2 * nb2 + i1 * nb1;
 
                     // Write only the row payload while striding the DDR dst
@@ -600,6 +638,21 @@ static void rope_job_f32(unsigned int nth, unsigned int ith, void * data) {
 
                         const uint8_t * src_addr = (const uint8_t *) src0->data + i3 * nb03 + i2 * nb02 + pi1 * nb01;
                         dma_queue_push(dma_queue, dma_make_ptr(src_spad, src_addr),
+=======
+                    const dma_addr_t dst_data = dst->data + i3 * nb3 + i2 * nb2 + cur_i1 * nb1;
+                    dma_queue_push(dma_q, dma_make_data(dst_data, cur_spad),
+                        rctx->dst_row_stride, rctx->src0_row_size_aligned, rctx->dst_row_size, cnr);
+
+                    // Prefetch 2 blocks ahead into the slot just freed
+                    if ((cr + 2 * HTP_ROPE_SPAD_BLOCK) < nrows) {
+                        const uint32_t p_cr   = cr + 2 * HTP_ROPE_SPAD_BLOCK;
+                        const uint32_t pnr    = MIN(nrows - p_cr, HTP_ROPE_SPAD_BLOCK);
+                        const uint32_t p_slot = (cur_slot + p_cr / HTP_ROPE_SPAD_BLOCK) % HTP_ROPE_SPAD_NSLOTS;
+                        uint8_t * p_spad      = rope_spad_slot(src0_spad_base, p_slot, rctx->src0_row_size_aligned);
+                        const dma_addr_t p_src0_data = src0->data + i3 * nb03 + i2 * nb02 + (base_i1 + p_cr) * nb01;
+
+                        dma_queue_push(dma_q, dma_make_data(p_spad, p_src0_data),
+>>>>>>> ggml-org/master
                             rctx->src0_row_size_aligned, rctx->src0_row_stride, rctx->src0_row_size, pnr);
 
                         // FARF(HIGH, "rope-prefetch %u: pr %u i1 %u i2 %u i3 %u src-spad %p src-addr %p pnr %u", ith, pir, pi1, i2, i3, src_spad, src_addr, pnr);
@@ -610,8 +663,12 @@ static void rope_job_f32(unsigned int nth, unsigned int ith, void * data) {
     }
 
 done:
+<<<<<<< HEAD
     dma_queue_flush(dma_queue);
     tt = HAP_perf_get_qtimer_count() - tt;
+=======
+    dma_queue_flush(dma_q);
+>>>>>>> ggml-org/master
 
     FARF(HIGH, "rope-f32: %d/%d: (%u:%u) usec %u\n", ith, nth, src0_start_row, src0_end_row, (unsigned) HAP_perf_qtimer_count_to_us(tt));
 }
@@ -624,6 +681,7 @@ static int execute_op_rope_f32(struct htp_ops_context * octx) {
     const struct htp_tensor * src2 = octx->src[2];
     const struct htp_tensor * dst  = octx->dst;
 
+<<<<<<< HEAD
     const char * op_type = "rope-f32";
 
     switch (octx->op) {
@@ -635,6 +693,39 @@ static int execute_op_rope_f32(struct htp_ops_context * octx) {
             return HTP_STATUS_NO_SUPPORT;
     }
 
+=======
+    const struct htp_rope_kernel_params * kparams = (const struct htp_rope_kernel_params *) octx->kernel_params;
+    if (!htp_ops_context_set_n_threads(octx, kparams->n_threads)) {
+        return HTP_STATUS_INVAL_PARAMS;
+    }
+    assert(octx->ctx->vtcm_size >= kparams->vtcm_size);
+
+    if (htp_tensor_is_extended(src1)) {
+        return HTP_STATUS_NO_SUPPORT;
+    }
+
+    const uint32_t total_rows = src0->ne[1] * src0->ne[2] * src0->ne[3];
+    const size_t dst_data_row_size = dst->ne[0] * sizeof(float);
+
+    uint32_t row_start = 0;
+    uint32_t nrows     = total_rows;
+
+    if (octx->ctx->mdev.count > 1) {
+        uint32_t rows_per_chunk = 0;
+        htp_tensor_mdev_rows_per_chunk(dst, sizeof(float), (uint32_t) dst_data_row_size, &rows_per_chunk);
+        const struct htp_tensor_mdev_range range = htp_tensor_mdev_partition(
+            total_rows, rows_per_chunk, octx->ctx->mdev.idx, octx->ctx->mdev.count, &octx->ctx->mdev.count_div);
+        row_start = range.start;
+        nrows     = range.count;
+    }
+
+    if (nrows == 0) {
+        return HTP_STATUS_OK;
+    }
+
+    const uint32_t n_threads = octx->n_threads;
+
+>>>>>>> ggml-org/master
     const uint32_t ne0 = dst->ne[0];
     const uint32_t src0_nrows = src0->ne[1] * src0->ne[2] * src0->ne[3];
     const uint32_t n_threads = MIN(octx->n_threads, src0_nrows);
@@ -644,6 +735,7 @@ static int execute_op_rope_f32(struct htp_ops_context * octx) {
     const size_t dst_row_size    = dst->ne[0] * sizeof(float);
     const size_t dst_row_stride  = dst->nb[1];
 
+<<<<<<< HEAD
     // Aligned row sizes for VTCM
     const size_t src0_row_size_aligned    = hex_round_up(src0_row_size, VLEN);
     const size_t dst_row_size_aligned     = hex_round_up(dst_row_stride, VLEN);
@@ -670,13 +762,34 @@ static int execute_op_rope_f32(struct htp_ops_context * octx) {
     octx->src0_spad.data = octx->ctx->vtcm_base;                        octx->src0_spad.src = NULL;
     octx->src1_spad.data = NULL;                                        octx->src1_spad.src = NULL;
     octx->dst_spad.data  = octx->src0_spad.data + octx->src0_spad.size; octx->dst_spad.src  = NULL;
+=======
+    struct htp_rope_vtcm_layout layout;
+    htp_rope_vtcm_layout_build(&layout, src0->ne[0], kparams->n_threads, src2 ? src2->ne[0] : 0);
+>>>>>>> ggml-org/master
 
     struct htp_rope_context rctx;
     memset(&rctx, 0, sizeof(struct htp_rope_context));
 
+<<<<<<< HEAD
     rctx.t_start = HAP_perf_get_qtimer_count();
 
     rctx.octx = octx;
+=======
+    rctx.octx                  = octx;
+    rctx.vtcm_base             = VTCM_LAYOUT_PTR(uint8_t, octx->ctx->vtcm_base, layout.off_spad);
+    rctx.spad_per_thread       = layout.bytes_per_thread;
+    rctx.theta_cache_offset    = layout.theta_cache_size_aligned;
+
+    if (src2) {
+        dma_queue * dma_q = octx->ctx->dma[0];
+        const size_t ff_size = src2->ne[0] * sizeof(float);
+        float * vtcm_freq_factors = VTCM_LAYOUT_PTR(float, octx->ctx->vtcm_base, layout.off_freq_factors);
+        dma_queue_push(dma_q, dma_make_data(vtcm_freq_factors, src2->data),
+                       layout.freq_factors_size_aligned, 0, ff_size, 1);
+        dma_queue_pop(dma_q);
+        rctx.freq_factors = vtcm_freq_factors;
+    }
+>>>>>>> ggml-org/master
 
     const int32_t * op_params = &octx->op_params[0];
     rctx.n_dims     = ((const int32_t *) op_params)[1];
@@ -696,6 +809,7 @@ static int execute_op_rope_f32(struct htp_ops_context * octx) {
 
     rope_corr_dims(rctx.n_dims, rctx.n_ctx_orig, rctx.freq_base, rctx.beta_fast, rctx.beta_slow, rctx.corr_dims);
 
+<<<<<<< HEAD
     rctx.src0_row_size   = src0_row_size;
     rctx.src0_row_stride = src0_row_stride;
     rctx.dst_row_size    = dst_row_size;
@@ -703,6 +817,13 @@ static int execute_op_rope_f32(struct htp_ops_context * octx) {
     rctx.src0_row_size_aligned = src0_row_size_aligned;
     rctx.dst_row_size_aligned  = dst_row_size_aligned;
     rctx.theta_cache_offset    = theta_cache_size_aligned;
+=======
+    rctx.src0_row_size         = src0_row_size;
+    rctx.src0_row_stride       = src0_row_stride;
+    rctx.dst_row_size          = dst_row_size;
+    rctx.dst_row_stride        = dst_row_stride;
+    rctx.src0_row_size_aligned = layout.src0_row_size_aligned;
+>>>>>>> ggml-org/master
 
     rctx.src0_nrows = src0_nrows;
     rctx.src0_nrows_per_thread = (src0_nrows + n_threads - 1) / n_threads;

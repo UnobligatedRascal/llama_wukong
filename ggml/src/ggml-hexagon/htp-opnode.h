@@ -1,32 +1,74 @@
 #ifndef HTP_OPNODE_H
 #define HTP_OPNODE_H
 
-#define GGML_COMMON_IMPL_CPP
 #include "ggml-backend-impl.h"
-#include "ggml-common.h"
+#include "ggml-impl.h"
+#include "htp/htp-ops.h"
 
-#include <algorithm>
+#include <cstring>
+#include <initializer_list>
+#include <memory>
 #include <string>
 #include <vector>
-#include <memory>
-#include <stdio.h>
-#include "htp-ops.h"
-#include "htp/matmul-ops.h"
-#include "htp/flash-attn-ops.h"
-#include "htp/unary-ops.h"
-#include "htp/allreduce-ops.h"
+
+#define HTP_OP_MAX_FUSED 16
+
+// local std::inplace_vector replacement
+template <typename T, size_t MAX_N>
+struct htp_opvec {
+    T      data[MAX_N] {};
+    size_t n = 0;
+
+    htp_opvec() = default;
+    htp_opvec(std::initializer_list<T> init) {
+        GGML_ASSERT(init.size() <= MAX_N);
+        for (const auto & v : init) {
+            data[n++] = v;
+        }
+    }
+
+    size_t    size()  const { return n; }
+    bool      empty() const { return n == 0; }
+    void      clear()       { n = 0; }
+    T *       begin()       { return data; }
+    T *       end()         { return data + n; }
+    const T * begin() const { return data; }
+    const T * end()   const { return data + n; }
+    T &       back()        { return data[n - 1]; }
+    const T & back()  const { return data[n - 1]; }
+    T &       operator[](size_t i)       { return data[i]; }
+    const T & operator[](size_t i) const { return data[i]; }
+
+    void push_back(T val) {
+        GGML_ASSERT(n < MAX_N);
+        data[n++] = val;
+    }
+
+    void insert(T * pos, T val) {
+        GGML_ASSERT(n < MAX_N);
+        for (T * p = data + n; p > pos; --p) {
+            *p = *(p - 1);
+        }
+        *pos = val;
+        n++;
+    }
+};
+
+static inline bool htp_is_hadamard(const struct ggml_tensor * t) {
+    return t && t->op == GGML_OP_MUL_MAT && ggml_get_op_params_i32(t, 1) == GGML_HINT_SRC0_IS_HADAMARD;
+}
 
 struct htp_opnode {
-    ggml_tensor * node   { nullptr };
-    htp_op_code   opcode { HTP_OP_INVALID };
-    int32_t       kernel_params[HTP_OP_MAX_KERN_PARAMS] {0};
+    const ggml_tensor * node   { nullptr };
+    htp_op_code         opcode { HTP_OP_INVALID };
+    int32_t             params[HTP_OP_MAX_PARAMS] {0};
+    int32_t             kernel_params[HTP_OP_MAX_KERN_PARAMS] {0};
 
-    std::vector<ggml_tensor *>                fused;
-    std::vector<std::shared_ptr<ggml_tensor>> dummy;
+    std::vector<std::shared_ptr<ggml_tensor>>          dummy;
 
-    std::vector<const ggml_tensor *> inputs;
-    std::vector<const ggml_tensor *> outputs;
-    std::string                      name;
+    htp_opvec<const ggml_tensor *, HTP_OP_MAX_FUSED>   fused;
+    htp_opvec<const ggml_tensor *, HTP_OP_MAX_INPUTS>  inputs;
+    htp_opvec<const ggml_tensor *, HTP_OP_MAX_OUTPUTS> outputs;
 
     int n_active_src(const ggml_tensor * t) const {
         if (!t) return 0;
@@ -38,28 +80,36 @@ struct htp_opnode {
         return 0;
     }
 
-    void init(ggml_tensor * node) {
+    void init(const ggml_tensor * node) {
+        static_assert(sizeof(this->params) == sizeof(this->node->op_params), "params size mismatch");
+
         this->node = node;
-        if (this->node) {
-            this->name = ggml_op_desc(this->node);
+        if (!node) return;
 
-            // Build inputs (preserving optional nullptrs)
+        memcpy(this->params, this->node->op_params, sizeof(this->params));
+
+        // Build inputs (preserving optional nullptrs)
+        if (htp_is_hadamard(this->node)) {
+            this->inputs.push_back(this->node->src[1]);
+        } else {
             int n_inputs = n_active_src(this->node);
-            this->inputs.resize(n_inputs, nullptr);
             for (int i = 0; i < n_inputs; i++) {
-                this->inputs[i] = this->node->src[i];
+                this->inputs.push_back(this->node->src[i]);
             }
-
-            // Build outputs
-            this->outputs.push_back(this->dst());
         }
+
+        // Build outputs
+        this->outputs.push_back(this->dst());
     }
 
-    htp_opnode(htp_op_code opcode = HTP_OP_INVALID, ggml_tensor * node = nullptr) : opcode(opcode) {
+    htp_opnode(htp_op_code opcode = HTP_OP_INVALID, const ggml_tensor * node = nullptr) : opcode(opcode) {
         init(node);
     }
 
-    ggml_op             op()   const { return node->op; }
+    htp_opnode(const ggml_tensor * node) : opcode(HTP_OP_INVALID) {
+        init(node);
+    }
+
     const ggml_tensor * src0() const { return node->src[0]; }
     const ggml_tensor * src1() const { return node->src[1]; }
     const ggml_tensor * dst()  const { return outputs.empty() ? node : outputs.back(); }
@@ -69,75 +119,48 @@ struct htp_opnode {
         return dummy.back().get();
     }
 
-    void add_fused(ggml_tensor * t, bool extra_dst = false) {
-        fused.push_back(t);
-
-        name += "+";
-        name += ggml_op_desc(t);
-
-        if (extra_dst) {
-            outputs.push_back(t);
-        } else {
-            outputs.clear();
-            outputs.push_back(t);
-        }
-
-        // Remove the newly fused intermediate output tensor t from inputs (if it was there)
-        inputs.erase(std::remove(inputs.begin(), inputs.end(), t), inputs.end());
-
-        // Append new inputs from t, preserving middle nullptrs
-        int n_inputs = n_active_src(t);
-        for (int i = 0; i < n_inputs; i++) {
-            const auto * src = t->src[i];
-            if (!src) {
-                inputs.push_back(nullptr);
-            } else if (src != node &&
-                       std::find(fused.begin(), fused.end(), src) == fused.end() &&
-                       std::find(inputs.begin(), inputs.end(), src) == inputs.end()) {
-                inputs.push_back(src);
-            }
-        }
-    }
-
-    const std::vector<const ggml_tensor *> & get_inputs() const {
+    const htp_opvec<const ggml_tensor *, HTP_OP_MAX_INPUTS> & get_inputs() const {
         return inputs;
     }
 
-    const std::vector<const ggml_tensor *> & get_outputs() const {
+    const htp_opvec<const ggml_tensor *, HTP_OP_MAX_OUTPUTS> & get_outputs() const {
         return outputs;
     }
 
-    std::string op_name() const {
-        return name;
+    template <typename T>
+    T * kparams() {
+        static_assert(sizeof(T) <= sizeof(kernel_params), "kparams size exceeds HTP_OP_MAX_KERN_PARAMS");
+        static_assert(alignof(T) <= alignof(int32_t), "kparams alignment exceeds int32_t");
+        return reinterpret_cast<T *>(kernel_params);
     }
 
-    bool is_empty() const {
-        return ggml_op_is_empty(node->op);
+    template <typename T>
+    const T * kparams() const {
+        static_assert(sizeof(T) <= sizeof(kernel_params), "kparams size exceeds HTP_OP_MAX_KERN_PARAMS");
+        static_assert(alignof(T) <= alignof(int32_t), "kparams alignment exceeds int32_t");
+        return reinterpret_cast<const T *>(kernel_params);
     }
 
-    bool stackable() const {
-        switch (this->op()) {
-            case GGML_OP_MUL_MAT:
-            case GGML_OP_MUL_MAT_ID:
-                return ggml_is_quantized(this->src0()->type);
-            default:
-                return false;
-        }
+    template <typename T>
+    void set_kparams(const T & kp) {
+        static_assert(sizeof(T) <= sizeof(kernel_params), "kparams size exceeds HTP_OP_MAX_KERN_PARAMS");
+        static_assert(alignof(T) <= alignof(int32_t), "kparams alignment exceeds int32_t");
+        memcpy(kernel_params, &kp, sizeof(T));
     }
 
-    bool same_input(const htp_opnode& n) const {
-        return n.src1() == this->src1();
-    }
+    std::string name() const;
 };
 
-struct htp_opformat {
-    char strides[64 * GGML_MAX_SRC];
-    char dims[64 * GGML_MAX_SRC];
-    char types[16 * GGML_MAX_SRC];
-    char buffs[64 * GGML_MAX_SRC];
-    char names[64 * GGML_MAX_SRC];
-    char kparams[128];
+enum htp_opformat_flags {
+    HTP_OPFMT_OP      = (1 << 0),
+    HTP_OPFMT_NAMES   = (1 << 1),
+    HTP_OPFMT_DIMS    = (1 << 2),
+    HTP_OPFMT_TYPES   = (1 << 3),
+    HTP_OPFMT_STRIDES = (1 << 4),
+    HTP_OPFMT_BUFFS   = (1 << 5),
+    HTP_OPFMT_KPARAMS = (1 << 6),
 
+<<<<<<< HEAD
     int format_tensor_dims(char * str, size_t max_size, const struct ggml_tensor * t) {
         if (!t) {
             return snprintf(str, max_size, "NONE");
@@ -366,6 +389,15 @@ struct htp_opformat {
         kparams[0] = '\0';
     }
     htp_opformat(const htp_opnode & node) { format(node); }
+=======
+    HTP_OPFMT_EXEC    = HTP_OPFMT_OP | HTP_OPFMT_NAMES | HTP_OPFMT_DIMS | HTP_OPFMT_TYPES | HTP_OPFMT_STRIDES | HTP_OPFMT_BUFFS | HTP_OPFMT_KPARAMS,
+    HTP_OPFMT_SUPP    = HTP_OPFMT_OP | HTP_OPFMT_NAMES | HTP_OPFMT_DIMS | HTP_OPFMT_TYPES | HTP_OPFMT_STRIDES | HTP_OPFMT_BUFFS,
+    HTP_OPFMT_PROF    = HTP_OPFMT_OP | HTP_OPFMT_NAMES | HTP_OPFMT_DIMS | HTP_OPFMT_TYPES | HTP_OPFMT_STRIDES | HTP_OPFMT_KPARAMS,
+    HTP_OPFMT_TENSOR  = HTP_OPFMT_NAMES | HTP_OPFMT_DIMS | HTP_OPFMT_TYPES | HTP_OPFMT_STRIDES,
+>>>>>>> ggml-org/master
 };
+
+std::string htp_format_op(const htp_opnode & node, uint32_t flags = HTP_OPFMT_EXEC);
+std::string htp_format_tensor(const ggml_tensor * t, uint32_t flags = HTP_OPFMT_TENSOR);
 
 #endif // HTP_OPNODE_H

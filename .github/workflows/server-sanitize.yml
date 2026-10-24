@@ -31,6 +31,10 @@ on:
       '.github/workflows/server-sanitize.yml'
     ]
 
+cache-mode: none
+permissions:
+  contents: read
+
 env:
   LLAMA_ARG_LOG_COLORS: 1
   LLAMA_ARG_LOG_PREFIX: 1
@@ -43,7 +47,11 @@ concurrency:
 
 jobs:
   server:
+<<<<<<< HEAD
     runs-on: [self-hosted, CPU, Linux, llama-server]
+=======
+    runs-on: hf-jobs-cpu-performance
+>>>>>>> ggml-org/master
 
     strategy:
       matrix:
@@ -102,8 +110,12 @@ jobs:
         run: |
           source .venv/bin/activate
           cd tools/server/tests
+<<<<<<< HEAD
           export ${{ matrix.extra_args }}
           ./tests.sh
+=======
+          PYTEST_WORKERS=4 ./tests.sh
+>>>>>>> ggml-org/master
 
       - name: Slow tests
         id: server_integration_tests_slow
@@ -111,5 +123,9 @@ jobs:
         run: |
           source .venv/bin/activate
           cd tools/server/tests
+<<<<<<< HEAD
           export ${{ matrix.extra_args }}
           SLOW_TESTS=1 ./tests.sh
+=======
+          PYTEST_WORKERS=4 SLOW_TESTS=1 ./tests.sh
+>>>>>>> ggml-org/master

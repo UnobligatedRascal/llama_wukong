@@ -1,10 +1,21 @@
 // Meta parser for `edit_file` tool calls. Reads the file path and the
 // array of edits from the streamed args (partial JSON for incremental
 // rendering), plus the result blob for `result` / `edits_applied` /
-// `error` fields.
+// `error` fields. The path is display-only (block title), so a call
+// that has not streamed one still shows its diffs.
 
+<<<<<<< HEAD
 import { parseToolArgs } from './_shared';
 import { FILE_PATH_SEPARATOR_REGEX } from '$lib/constants';
+=======
+import {
+	extractToolArgPath,
+	extractToolArgString,
+	fileNameFromPath,
+	parseToolArgs
+} from './_shared';
+import { TOOL_ARG_PATH_KEYS } from '$lib/constants';
+>>>>>>> ggml-org/master
 import { BuiltInTool } from '$lib/enums';
 import type { AgenticSection } from '$lib/types';
 import { tryParseToolResultObject } from '$lib/utils';
@@ -28,11 +39,8 @@ export function parseEditFileMeta(section: AgenticSection): EditFileMeta | null 
 
 	if (!args) return null;
 
-	const rawPath = args.path ?? args.file_path ?? args.filePath;
-
-	if (typeof rawPath !== 'string' || !rawPath) return null;
-
-	const fileName = rawPath.split(FILE_PATH_SEPARATOR_REGEX).pop() || rawPath;
+	const filePath = extractToolArgPath(args);
+	const fileName = fileNameFromPath(filePath);
 	// Filter the streamed edits array strictly: each entry must be an
 	// object with a non-empty `old_text`. Edits without an old_text
 	// would diff against empty and render as a full re-write.
@@ -75,7 +83,49 @@ export function parseEditFileMeta(section: AgenticSection): EditFileMeta | null 
 		editsApplied,
 		errorMessage,
 		fileName,
-		filePath: rawPath,
+		filePath,
 		resultMessage
 	};
 }
+<<<<<<< HEAD
+=======
+
+/**
+ * Title-tier meta for edit_file blocks: everything the header and status
+ * pill render, obtained without parsing the embedded edit strings. The path
+ * comes from a targeted key extraction; the full parse runs only as a
+ * fallback for arg shapes the extraction can't see.
+ */
+export function parseEditFileTitleMeta(section: AgenticSection): EditFileTitleMeta | null {
+	if (section.toolName !== BuiltInTool.SERVER_EDIT_FILE || !section.toolArgs) return null;
+
+	let filePath = extractToolArgString(section.toolArgs, TOOL_ARG_PATH_KEYS);
+
+	if (!filePath) {
+		filePath = extractToolArgPath(
+			parseToolArgs(BuiltInTool.SERVER_EDIT_FILE, section, { partial: true })
+		);
+	}
+
+	const fileName = fileNameFromPath(filePath);
+	const resultObj = tryParseToolResultObject(section.toolResult);
+
+	let resultMessage: string | undefined;
+	let editsApplied: number | undefined;
+	let errorMessage: string | undefined;
+
+	if (typeof resultObj?.error === 'string') {
+		errorMessage = resultObj.error;
+	} else if (resultObj) {
+		if (typeof resultObj.result === 'string') {
+			resultMessage = resultObj.result;
+		}
+
+		if (Number.isFinite(Number(resultObj.edits_applied))) {
+			editsApplied = Number(resultObj.edits_applied);
+		}
+	}
+
+	return { editsApplied, errorMessage, fileName, filePath, resultMessage };
+}
+>>>>>>> ggml-org/master

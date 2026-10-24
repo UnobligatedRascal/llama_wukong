@@ -7,15 +7,7 @@ on:
       - master
     paths: [
       '.github/workflows/build-webgpu.yml',
-      '**/CMakeLists.txt',
-      '**/.cmake',
-      '**/*.h',
-      '**/*.hpp',
-      '**/*.c',
-      '**/*.cpp',
-      '**/*.wgsl',
-      '**/*.tmpl',
-      'ggml/src/ggml-webgpu/wgsl-shaders/embed_wgsl.py'
+      'ggml/src/ggml-webgpu/**'
     ]
 
   pull_request:
@@ -24,6 +16,10 @@ on:
       '.github/workflows/build-webgpu.yml',
       'ggml/src/ggml-webgpu/**'
     ]
+
+cache-mode: none
+permissions:
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref && github.ref || github.run_id }}
@@ -59,6 +55,7 @@ jobs:
             -type f \( -name '*.cpp' -o -name '*.hpp' -o -name '*.h' \) \
             -print0 |
             xargs -0 clang-format-22 --dry-run --Werror
+<<<<<<< HEAD
 
   macos:
     runs-on: macos-latest
@@ -173,3 +170,5 @@ jobs:
           older: 5m
           min: 1
           dry-run: ${{ github.event_name != 'push' || github.ref != 'refs/heads/master' }}
+=======
+>>>>>>> ggml-org/master
