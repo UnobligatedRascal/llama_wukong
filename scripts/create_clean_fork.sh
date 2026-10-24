@@ -15,7 +15,10 @@
 
 set -e
 
-REPO_DIR="/home/whistler/llama_wukong"
+# Use environment variables for paths - set LLAMA_WUKONG_HOME if needed
+LLAMA_WUKONG_HOME="${LLAMA_WUKONG_HOME:-${LLAMA_WUKONG_HOME}}"
+
+REPO_DIR="${LLAMA_WUKONG_HOME}"
 cd "$REPO_DIR"
 
 echo "=== Creating clean llama_wukong fork ==="

@@ -1,10 +1,13 @@
 #!/bin/bash
 # llama_wukong build script for NOUGHT (Kepler sm_37)
-# Run from: /home/whistler/llama_wukong
+# Run from: ${LLAMA_WUKONG_HOME}
 
 set -e
 
-cd /home/whistler/llama_wukong
+# Use environment variables for paths - set LLAMA_WUKONG_HOME if needed
+LLAMA_WUKONG_HOME="${LLAMA_WUKONG_HOME:-${LLAMA_WUKONG_HOME}}"
+
+cd ${LLAMA_WUKONG_HOME}
 rm -rf build && mkdir build && cd build
 
 echo "Configuring llama_wukong for Kepler sm_37..."
