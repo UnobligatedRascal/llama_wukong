@@ -1,11 +1,8 @@
 *
 !*.*
 !snapshots/
-<<<<<<< HEAD
-=======
 !fusion/
 !llama-context/
->>>>>>> ggml-org/master
 *.o
 ggml-common.h
 **/*.swp

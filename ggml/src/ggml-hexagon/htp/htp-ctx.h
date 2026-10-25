@@ -21,22 +21,14 @@
 #define HTP_MAX_NTHREADS 10
 #endif
 
-<<<<<<< HEAD
-#define HTP_MAX_DIRTY_RANGES 16
-=======
 #define HTP_MAX_MMAPS 64
->>>>>>> ggml-org/master
 
 // Memory mapping
 struct htp_mmap {
     uint64_t size;
     uint64_t base;
     uint32_t fd;
-<<<<<<< HEAD
-    uint32_t reserved;
-=======
     uint32_t flags;
->>>>>>> ggml-org/master
 };
 
 // Scratchpad state
@@ -46,6 +38,14 @@ struct htp_spad {
     uint32_t                  stride;          // stride used inside this spad
     uint32_t                  size;            // total size
     uint32_t                  size_per_thread; // size per thread
+};
+
+struct htp_mdev_group {
+    uint16_t              idx;
+    uint16_t              count;
+    struct fastdiv_values count_div;
+    uint8_t *             fence_base;
+    uint32_t              fence_seq;
 };
 
 struct htp_context;
@@ -70,10 +70,6 @@ struct htp_ops_context {
     struct htp_spad src1_spad;
     struct htp_spad dst_spad;
 
-<<<<<<< HEAD
-    uint32_t n_threads;
-    uint32_t flags;
-=======
     uint32_t              flags;
     uint32_t              n_threads;
     struct fastdiv_values n_threads_div;
@@ -84,7 +80,6 @@ struct htp_ops_context {
         dma_cache_dm dma_cache_dm[HTP_MAX_NTHREADS];
         dma_cache_fa dma_cache_fa[HTP_MAX_NTHREADS];
     } __attribute__((aligned(128)));
->>>>>>> ggml-org/master
 };
 
 // Main context for htp DSP backend
@@ -93,11 +88,7 @@ struct htp_context {
 
     struct htp_mmap        mmap[HTP_MAX_MMAPS];
     dma_queue_t            dma[HTP_MAX_NTHREADS];
-<<<<<<< HEAD
-    dma_queue_t            dma_cached[HTP_MAX_NTHREADS];
-=======
     struct htp_thread_trace trace[HTP_MAX_NTHREADS + 1];
->>>>>>> ggml-org/master
     work_queue_t           work_queue;
     hmx_queue_t            hmx_queue;
 
@@ -110,7 +101,6 @@ struct htp_context {
     bool                   hmx_enabled;
     bool                   etm;
     uint32_t               profiler;
-    struct htp_thread_trace trace[HTP_MAX_NTHREADS + 1];
 
     uint8_t *              vtcm_base;
     size_t                 vtcm_size;
@@ -119,16 +109,13 @@ struct htp_context {
     atomic_bool            vtcm_needs_release;
 
     uint64_t               max_vmem;
-    struct htp_dirty_range {
-        uint32_t start;
-        uint32_t end;
-        uint32_t bi;
-    } dirty_ranges[HTP_MAX_DIRTY_RANGES];
+    struct htp_dirty_range dirty_ranges[HTP_MAX_DIRTY_RANGES];
 
     // Persistent DDR scratchpad for MUL_MAT_ID mappings
     void *                 ddr_spad_base;
     size_t                 ddr_spad_size;
 
+    struct htp_mdev_group  mdev;
     struct htp_ops_context octx;
 
     qurt_thread_t          main_thread;
@@ -137,8 +124,6 @@ struct htp_context {
     size_t                 footprint;
 };
 
-<<<<<<< HEAD
-=======
 static inline void htp_ops_context_reset(struct htp_ops_context * octx, struct htp_context * ctx) {
     memset(octx, 0, offsetof(struct htp_ops_context, dma_cache_dm));
     octx->ctx           = ctx;
@@ -167,10 +152,10 @@ static inline void htp_ops_context_set_status(struct htp_ops_context * octx, int
     }
 }
 
->>>>>>> ggml-org/master
 int op_matmul(struct htp_ops_context * octx);
 int op_matmul_id(struct htp_ops_context * octx);
 int op_matmul_nx(struct htp_ops_context * octx);
+int op_matmul_id_nx(struct htp_ops_context * octx);
 int op_binary(struct htp_ops_context * octx);
 int op_unary(struct htp_ops_context * octx);
 int op_sum(struct htp_ops_context * octx);

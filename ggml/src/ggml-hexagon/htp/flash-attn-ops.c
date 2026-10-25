@@ -5,7 +5,6 @@
 #include <assert.h>
 #include <HAP_compute_res.h>
 #include <HAP_farf.h>
-#include <HAP_perf.h>
 #include <math.h>
 #include <stdbool.h>
 #include <stdatomic.h>
@@ -97,6 +96,7 @@ struct htp_fa_context {
 
     uint32_t qrows;
     uint32_t qrows_per_thread;
+    uint32_t qrow_start;
 
     bool is_q_fp32;
 
@@ -115,8 +115,6 @@ struct htp_fa_context {
 
     const struct htp_tensor * k;
     const struct htp_tensor * v;
-
-    uint64_t t_start;
 };
 
 struct hmx_fa_context {
@@ -308,10 +306,9 @@ static void flash_attn_ext_f16_thread(unsigned int nth, unsigned int ith, void *
     const uint32_t nb3 = dst->nb[3];
 
     // total rows in q
-    const uint32_t nr = factx->qrows;
-    const uint32_t dr = factx->qrows_per_thread;
-    const uint32_t ir0 = dr * ith;
-    const uint32_t ir1 = MIN(ir0 + dr, nr);
+    const uint32_t dr  = factx->qrows_per_thread;
+    const uint32_t ir0 = factx->qrow_start + dr * ith;
+    const uint32_t ir1 = MIN(ir0 + dr, factx->qrow_start + factx->qrows);
 
     if (ir0 >= ir1) return;
 
@@ -2083,8 +2080,6 @@ int hmx_flash_attn_ext(struct htp_ops_context * octx) {
     const uint32_t n_threads = factx.n_threads;
     const uint32_t G = factx.G;
 
-<<<<<<< HEAD
-=======
     // Multi-device: prefer head-parallel partitioning (each core owns a disjoint head
     // shard), falling back to Q-block (token) split when heads don't divide evenly.
     const uint32_t n_q_blocks = (neq1 + Br - 1) / Br;
@@ -2117,7 +2112,6 @@ int hmx_flash_attn_ext(struct htp_ops_context * octx) {
         }
     }
 
->>>>>>> ggml-org/master
     // ======== VTCM allocation (GQA-aware) ========
     // K/V row sizes drive the DMA descriptors (not the VTCM layout) and are used
     // throughout the KV loop below. The DMA copies only the real DK/DV columns; the
@@ -2238,7 +2232,7 @@ int hmx_flash_attn_ext(struct htp_ops_context * octx) {
     // ======== Main loop ========
     for (uint32_t ib3 = 0; ib3 < neq3; ++ib3) {
         const uint32_t im3 = mask ? fastmodulo(ib3, mask->ne[3], &factx.src3_div3) : 0;
-        for (uint32_t q_start = 0; q_start < neq1; q_start += Br) {
+        for (uint32_t q_start = q_start_min; q_start < q_start_max; q_start += Br) {
             const uint32_t n_rows_q    = hex_smin(Br, neq1 - q_start);
             const size_t   n_rows_g    = n_rows_q * G;
             const size_t   g_br_actual = hex_align_up(n_rows_g, HMX_FP16_TILE_N_ROWS);
@@ -2267,18 +2261,11 @@ int hmx_flash_attn_ext(struct htp_ops_context * octx) {
                 const uint32_t iv2 = kv_head;
                 const uint32_t iv3 = fastdiv(ib3, &kparams->broadcast_rv3);
 
-<<<<<<< HEAD
-                // 1. Push Q and KV DMAs for the very first iteration.
-                // Subsequent iterations are enqueued early at the end of the previous iteration.
-                if (ib3 == 0 && q_start == 0 && kv_head == 0) {
-                    const uint8_t * q_ptr = (const uint8_t *) q->data;
-=======
                 // 1. Push Q and KV DMAs for the first kv_head of this q_start block.
                 // Subsequent kv_head iterations are enqueued early at the end of the previous iteration.
                 if (kv_head == kv_head_min) {
                     const dma_addr_t q_ptr = q->data + q_start * q->nb[1] +
                                             (kv_head * factx.G) * q->nb[2] + ib3 * q->nb[3];
->>>>>>> ggml-org/master
                     const size_t q_row_bytes = q_transposed ? n_rows_q * q_row_bytes_trans_factor : q_row_bytes_untransposed;
                     const size_t n_rows      = q_transposed ? factx.G : n_rows_q;
                     dma_queue_push(dma_q, dma_make_data(factx.vtcm_q_dma, q_ptr), q_row_bytes, hex_smax(q_src_stride, q_row_bytes), q_row_bytes, n_rows);
@@ -2595,25 +2582,9 @@ int hmx_flash_attn_ext(struct htp_ops_context * octx) {
                     }
                 }
 
-<<<<<<< HEAD
-                // Enqueue DMAs for the next iteration early so they overlap with O-PROC
-                uint32_t next_kv_head = kv_head + 1;
-                uint32_t next_q_start = q_start;
-                uint32_t next_ib3     = ib3;
-                if (next_kv_head >= n_kv_heads) {
-                    next_kv_head = 0;
-                    next_q_start = q_start + Br;
-                    if (next_q_start >= neq1) {
-                        next_q_start = 0;
-                        next_ib3     = ib3 + 1;
-                    }
-                }
-                bool has_next = (next_ib3 < neq3);
-=======
                 // Enqueue DMAs for the next kv_head early so they overlap with O-PROC
                 const uint32_t next_kv_head = kv_head + 1;
                 const bool has_next = (next_kv_head < kv_head_max);
->>>>>>> ggml-org/master
 
                 if (has_next) {
                     const dma_addr_t next_q_ptr = q->data + q_start * q->nb[1] + (next_kv_head * factx.G) * q->nb[2] + ib3 * q->nb[3];
@@ -2688,6 +2659,10 @@ int op_flash_attn_ext(struct htp_ops_context * octx) {
         return HTP_STATUS_NO_SUPPORT;
     }
 
+    if (!htp_ops_context_set_n_threads(octx, kparams->n_threads)) {
+        return HTP_STATUS_INVAL_PARAMS;
+    }
+
     if (kparams->kernel_type == HTP_FA_KERNEL_HMX) {
         return hmx_flash_attn_ext(octx);
     }
@@ -2696,8 +2671,6 @@ int op_flash_attn_ext(struct htp_ops_context * octx) {
     factx.octx = octx;
     factx.k = k;
     factx.v = v;
-
-    factx.t_start = HAP_perf_get_qtimer_count();
 
     factx.src0_div21 = kparams->u.hvx.src0_div21;
     factx.src0_div1  = kparams->u.hvx.src0_div1;
@@ -2747,10 +2720,6 @@ int op_flash_attn_ext(struct htp_ops_context * octx) {
     }
 
     // total rows in q
-<<<<<<< HEAD
-    factx.qrows = kparams->qrows;
-    factx.qrows_per_thread = kparams->qrows_per_thread;
-=======
     const uint32_t neq1 = q->ne[1];
     const uint32_t neq2 = q->ne[2];
     const uint32_t neq3 = q->ne[3];
@@ -2790,32 +2759,12 @@ int op_flash_attn_ext(struct htp_ops_context * octx) {
     factx.qrows            = qrows;
     factx.qrow_start       = qrow_start;
     factx.qrows_per_thread = fastdiv(qrows + n_threads - 1, &octx->n_threads_div);
->>>>>>> ggml-org/master
 
     const bool has_mask  = (mask != NULL);
     const bool has_sinks = (octx->src[4] != NULL);
     struct hvx_fa_vtcm_layout L;
     hvx_fa_vtcm_layout_build(&L, k->ne[0], v->ne[0], factx.is_q_fp32, has_mask, has_sinks, n_head, n_threads);
 
-<<<<<<< HEAD
-    factx.size_q_block = size_q_block;
-    factx.size_vkq_acc = size_vkq_acc;
-
-    uint8_t * vtcm_cur = octx->ctx->vtcm_base;
-
-    factx.spad_q = vtcm_seq_alloc(&vtcm_cur, size_q_block * octx->n_threads);
-    factx.spad_k = vtcm_seq_alloc(&vtcm_cur, factx.size_k_block * 2 * octx->n_threads);
-    factx.spad_v = vtcm_seq_alloc(&vtcm_cur, factx.size_v_block * 2 * octx->n_threads);
-    factx.spad_m = vtcm_seq_alloc(&vtcm_cur, (mask ? factx.size_m_block * HVX_FA_DMA_CACHE_SIZE : 0) * octx->n_threads);
-    factx.spad_a = vtcm_seq_alloc(&vtcm_cur, size_vkq_acc * octx->n_threads);
-
-    if ((size_t) (vtcm_cur - octx->ctx->vtcm_base) > octx->ctx->vtcm_size) {
-        return HTP_STATUS_VTCM_TOO_SMALL;
-    }
-
-    if (!(octx->flags & HTP_OPFLAGS_SKIP_COMPUTE)) {
-        work_queue_run(octx->ctx->work_queue, flash_attn_ext_f16_thread, &factx, octx->n_threads);
-=======
     if (L.total_bytes > octx->ctx->vtcm_size) {
         return HTP_STATUS_VTCM_TOO_SMALL;
     }
@@ -2842,7 +2791,6 @@ int op_flash_attn_ext(struct htp_ops_context * octx) {
             octx->ctx->dma[0], mask, 0, 1, 0, 0, k->ne[1], FLASH_ATTN_BLOCK_SIZE,
             factx.n_blocks, factx.spad_k, factx.size_k_block * 2, factx.ddr->active_blocks);
         factx.shared_active_blocks = true;
->>>>>>> ggml-org/master
     }
 
     if (has_sinks) {

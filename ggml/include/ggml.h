@@ -440,10 +440,21 @@ extern "C" {
         GGML_TYPE_COUNT   = 46,
     };
 
-    // precision
+    // [TAG_GGML_PREC]
+    // this enum is used to declare the allowed numerical precision/data-types types that can be used during the compute of an op
+    // the declared types can be:
+    //  - result accumulation type
+    //  - source tensor data representation type
+    //  - etc.
+    // the precision parameters are stored as ggml_tensor.op_params to the respective ops
     enum ggml_prec {
-        GGML_PREC_DEFAULT =  0, // stored as ggml_tensor.op_params, 0 by default
-        GGML_PREC_F32     = 10,
+        GGML_PREC_UNDEFINED = 0,
+        GGML_PREC_DEFAULT   = 0,  // note: deprecated, use GGML_PREC_UNDEFINED
+        GGML_PREC_F32       = 10,
+        GGML_PREC_BF16      = 15,
+        GGML_PREC_F16       = 20,
+        GGML_PREC_Q8        = 30,
+        GGML_PREC_Q4        = 40,
     };
 
     // op hint
@@ -922,6 +933,7 @@ extern "C" {
             enum   ggml_type      type);
 
     // dst[i0, i1, i2] = a[i0, i1, i2] + b[i0, ids[i1, i2]]
+    // an id of -1 adds nothing: dst[i0, i1, i2] = a[i0, i1, i2]
     GGML_API struct ggml_tensor * ggml_add_id(
             struct ggml_context * ctx,
             struct ggml_tensor  * a,
@@ -1482,6 +1494,7 @@ extern "C" {
     GGML_API enum ggml_prec ggml_prec_get_src(
             const struct ggml_tensor * a,
             int                        idx);
+
     // A: k columns, n rows => [ne03, ne02, n, k]
     // B: k columns, m rows  (i.e. we transpose it internally) => [ne03 * x, ne02 * y, m, k]
     // result is n columns, m rows => [ne03 * x, ne02 * y, m, n]
@@ -1492,9 +1505,10 @@ extern "C" {
 
     // change the precision of a matrix multiplication
     // set to GGML_PREC_F32 for higher precision (useful for phi-2)
-    GGML_API void ggml_mul_mat_set_prec(
+    GGML_DEPRECATED(GGML_API void ggml_mul_mat_set_prec(
             struct ggml_tensor * a,
-            enum ggml_prec       prec);
+            enum ggml_prec       prec),
+        "use ggml_prec_set_acc() instead");
 
     // change the hint of a matrix multiplication
     GGML_API void ggml_mul_mat_set_hint(
@@ -1502,6 +1516,7 @@ extern "C" {
             enum ggml_op_hint    hint);
 
     // indirect matrix multiplication
+    // an id of -1 skips the slot and zeroes the matching row of the result
     //
     // [TAG_MUL_MAT_ID_DUPLICATE_ID]
     // note: this op has undefined behaviour if a given `a` is referenced more than once for a given `b`
@@ -2504,12 +2519,19 @@ extern "C" {
             float                 max_bias,
             float                 logit_softcap);
 
-    GGML_API void ggml_flash_attn_ext_set_prec(
+    GGML_DEPRECATED(GGML_API void ggml_flash_attn_ext_set_prec(
             struct ggml_tensor * a,
-            enum ggml_prec       prec);
+            enum ggml_prec       prec),
+        "use ggml_prec_set_acc() instead");
 
     GGML_API enum ggml_prec ggml_flash_attn_ext_get_prec(
             const struct ggml_tensor * a);
+
+    // Use finite mask entries as a sparse K/V set. Set 0 to disable.
+    // n_kv_max must bound the number of finite entries in every mask row.
+    GGML_API void ggml_flash_attn_ext_set_n_kv_max(
+            struct ggml_tensor * a,
+            int32_t              n_kv_max);
 
     GGML_API void ggml_flash_attn_ext_add_sinks(
             struct ggml_tensor * a,

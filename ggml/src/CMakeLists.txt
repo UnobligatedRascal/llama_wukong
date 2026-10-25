@@ -209,12 +209,14 @@ add_library(ggml-base
             ggml-turbo-quant.c
             gguf.cpp)
 
+configure_file(ggml-version.h.in ${CMAKE_CURRENT_BINARY_DIR}/ggml-version.h @ONLY)
+
 set_target_properties(ggml-base PROPERTIES
     VERSION ${GGML_VERSION}
     SOVERSION ${GGML_VERSION_MAJOR}
 )
 
-target_include_directories(ggml-base PRIVATE .)
+target_include_directories(ggml-base PRIVATE . ${CMAKE_CURRENT_BINARY_DIR})
 if (GGML_BACKEND_DL)
     target_compile_definitions(ggml-base PUBLIC GGML_BACKEND_DL)
 endif()

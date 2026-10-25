@@ -331,8 +331,6 @@ kernel void kernel_gemv_noshuffle_q5_k_f32(
         if (gid * 2 + 1 < M) dst[gid * 2 + 1] = totalSum.s1;
     }
 }
-<<<<<<< HEAD
-=======
 
 // Multi-column (N in [2..4]) variant of the q5_K decode GEMV (spec/MTP verify) =
 // q4_K mc3 + the high-bit qh plane (regH). n_cols = 2..4 (drafted + bonus); routes
@@ -459,4 +457,3 @@ kernel void kernel_gemv_noshuffle_q5_k_f32_mc3(
 #undef MC_COL_Q5K
 #undef MC_DQ5_HI
 #undef MC_DQ5_LO
->>>>>>> ggml-org/master

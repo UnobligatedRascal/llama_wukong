@@ -27,12 +27,24 @@ layout (binding = 6) readonly buffer R_I {uvec2 rope_data_i[];}; // indices for 
 #define GGML_ROPE_TYPE_MROPE  8
 #define GGML_ROPE_TYPE_VISION 24
 
+#elif RMS_NORM_ADD_FUSION
+
+layout (binding = 3) readonly buffer C {float data_c[];};
+layout (binding = 4) readonly buffer E {float data_e[];};
+
+#elif RMS_NORM_SET_ROWS_FUSION
+
+layout (binding = 3) readonly buffer I {uvec2 data_i[];};
+
 #endif
 
 #extension GL_EXT_control_flow_attributes : enable
 #define BLOCK_SIZE 512
 
 layout (constant_id = 1) const bool do_multiply = false;
+#if RMS_NORM_ADD_FUSION
+layout (constant_id = 2) const bool do_post_multiply = false;
+#endif
 
 layout(local_size_x = BLOCK_SIZE, local_size_y = 1, local_size_z = 1) in;
 
@@ -59,15 +71,10 @@ void rms_norm(uint num_iters) {
             uint32_t a_offset = samp*stride_sample + channel*stride_channel + row*stride_row + get_aoffset();
             uint32_t b_offset = src1_idx(0, row, channel, samp) + get_boffset();
 #if RMS_NORM_ROPE_FUSION
-<<<<<<< HEAD
-    // Per-row offset in shared memory
-    uint32_t d_offset = 0;
-=======
             // Per-row offset in shared memory
             uint32_t d_offset = 0;
 #elif RMS_NORM_SET_ROWS_FUSION
             uint32_t d_offset = data_i[channel].x*p.nb21 + row*ncols + get_doffset();
->>>>>>> ggml-org/master
 #else
             uint32_t d_offset = ((samp*nchannels + channel)*nrows + row)*ncols + get_doffset();
 #endif
@@ -96,22 +103,6 @@ void rms_norm(uint num_iters) {
             const FLOAT_TYPE mean = sum / FLOAT_TYPE(ncols);
             const FLOAT_TYPE scale = inversesqrt(mean + FLOAT_TYPE(p.param1));
 
-<<<<<<< HEAD
-    if (do_multiply) {
-        if (ncols > p.ne10) {
-            [[unroll]] for (uint col = tid, idx = 0; idx < num_iters; col += BLOCK_SIZE, ++idx) {
-                if (col >= ncols) {
-                    continue;
-                }
-                data_d[d_offset + col] = D_TYPE(scale * FLOAT_TYPE(data_a[a_offset + col]) * FLOAT_TYPE(data_b[b_offset + fastmod(col, p.ne10)]));
-            }
-        } else {
-            [[unroll]] for (uint col = tid, idx = 0; idx < num_iters; col += BLOCK_SIZE, ++idx) {
-                if (col >= ncols) {
-                    continue;
-                }
-                data_d[d_offset + col] = D_TYPE(scale * FLOAT_TYPE(data_a[a_offset + col]) * FLOAT_TYPE(data_b[b_offset + col]));
-=======
             if (do_multiply) {
                 if (ncols > p.ne10) {
                     [[unroll]] for (uint col = tid, idx = 0; idx < num_iters; col += BLOCK_SIZE, ++idx) {
@@ -149,7 +140,6 @@ void rms_norm(uint num_iters) {
                     }
                     data_d[d_offset + col] = D_TYPE(scale * FLOAT_TYPE(data_a[a_offset + col]));
                 }
->>>>>>> ggml-org/master
             }
 #if RMS_NORM_ROPE_FUSION
             barrier();

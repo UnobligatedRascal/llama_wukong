@@ -43,11 +43,7 @@ if (LLAMA_BUILD_BORINGSSL)
     set(FIPS OFF CACHE BOOL "Enable FIPS (BoringSSL)")
 
     set(BORINGSSL_GIT "https://boringssl.googlesource.com/boringssl" CACHE STRING "BoringSSL git repository")
-<<<<<<< HEAD
-    set(BORINGSSL_VERSION "0.20260813.0" CACHE STRING "BoringSSL version")
-=======
     set(BORINGSSL_VERSION "0.20261020.0" CACHE STRING "BoringSSL version")
->>>>>>> ggml-org/master
 
     message(STATUS "Fetching BoringSSL version ${BORINGSSL_VERSION}")
 

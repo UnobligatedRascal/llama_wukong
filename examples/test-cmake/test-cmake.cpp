@@ -2,10 +2,6 @@
 #include <cstdio>
 
 int main(void) {
-<<<<<<< HEAD
-    printf("[test-cmake] version: %s, build: %d (%s)\n",
-           llama_version(), LLAMA_BUILD_NUMBER, LLAMA_BUILD_COMMIT);
-=======
 #ifdef LLAMA_BUILD_NUMBER
     printf("[test-cmake] llama.cpp version: %s, build: %d (%s)\n",
            llama_version(), LLAMA_BUILD_NUMBER, LLAMA_BUILD_COMMIT);
@@ -13,7 +9,6 @@ int main(void) {
     printf("[test-cmake] llama.cpp version: %s\n", llama_version());
 #endif
     printf("[test-cmake] ggml version: %s, commit: %s\n", ggml_version(), ggml_commit());
->>>>>>> ggml-org/master
     printf("[test-cmake] Initializing backend...\n");
     llama_backend_init();
     printf("[test-cmake] Backend initialized.\n");

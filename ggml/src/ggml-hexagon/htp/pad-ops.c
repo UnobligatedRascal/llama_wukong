@@ -12,14 +12,13 @@
 
 #define GGML_COMMON_DECL_C
 #include "ggml-common.h"
+#include "hex-common.h"
+#include "hex-profile.h"
 #include "htp-ctx.h"
 #include "htp-ops.h"
-<<<<<<< HEAD
-=======
 #include "htp-tensor.h"
 #include "htp-vtcm.h"
 #include "pad-ops.h"
->>>>>>> ggml-org/master
 
 /* Circular wrap: maps any integer x into [0, n) */
 static inline uint32_t wrap_around(int32_t x, uint32_t n, const struct fastdiv_values * div_n) {
@@ -103,6 +102,7 @@ struct htp_pad_context {
 
     uint32_t nrows_per_thread;
     uint32_t total_dst_rows;
+    uint32_t row_start;
 
     size_t   type_size;
 
@@ -113,39 +113,39 @@ struct htp_pad_context {
     size_t   dst_row_size_aligned;
 };
 
-#define htp_pad_preamble                            \
-    const struct htp_tensor * src = octx->src[0];   \
-    const struct htp_tensor * dst = octx->dst;      \
-                                                    \
-    const uint32_t ne00 = src->ne[0];               \
-    const uint32_t nb00 = src->nb[0];               \
-                                                    \
-    const uint32_t ne0 = dst->ne[0];                \
-    const uint32_t ne1 = dst->ne[1];                \
-    const uint32_t ne2 = dst->ne[2];                \
-    const uint32_t ne3 = dst->ne[3];                \
-                                                    \
-    const uint32_t nb1 = dst->nb[1];                \
-    const uint32_t nb2 = dst->nb[2];                \
-    const uint32_t nb3 = dst->nb[3];                \
-                                                    \
-    const int32_t lp0 = pctx->lp0, rp0 = pctx->rp0; \
-    const int32_t lp1 = pctx->lp1, rp1 = pctx->rp1; \
-    const int32_t lp2 = pctx->lp2, rp2 = pctx->rp2; \
-    const int32_t lp3 = pctx->lp3, rp3 = pctx->rp3; \
-                                                    \
-    const size_t type_size = pctx->type_size;       \
-                                                    \
-    const uint32_t row_start = pctx->nrows_per_thread * ith;                                 \
-    const uint32_t row_end   = MIN(row_start + pctx->nrows_per_thread, pctx->total_dst_rows);
+#define htp_pad_preamble                                                             \
+    const struct htp_tensor * src = octx->src[0];                                    \
+    const struct htp_tensor * dst = octx->dst;                                       \
+                                                                                     \
+    const uint32_t ne00 = src->ne[0];                                                \
+    const uint32_t nb00 = src->nb[0];                                                \
+                                                                                     \
+    const uint32_t ne0 = dst->ne[0];                                                 \
+    const uint32_t ne1 = dst->ne[1];                                                 \
+    const uint32_t ne2 = dst->ne[2];                                                 \
+    const uint32_t ne3 = dst->ne[3];                                                 \
+                                                                                     \
+    const uint32_t nb1 = dst->nb[1];                                                 \
+    const uint32_t nb2 = dst->nb[2];                                                 \
+    const uint32_t nb3 = dst->nb[3];                                                 \
+                                                                                     \
+    const int32_t lp0 = pctx->lp0, rp0 = pctx->rp0;                                  \
+    const int32_t lp1 = pctx->lp1, rp1 = pctx->rp1;                                  \
+    const int32_t lp2 = pctx->lp2, rp2 = pctx->rp2;                                  \
+    const int32_t lp3 = pctx->lp3, rp3 = pctx->rp3;                                  \
+                                                                                     \
+    const size_t type_size = pctx->type_size;                                        \
+                                                                                     \
+    const uint32_t row_start = pctx->row_start + pctx->nrows_per_thread * ith;       \
+    const uint32_t row_end   = MIN(row_start + pctx->nrows_per_thread, pctx->row_start + pctx->total_dst_rows);
 
 
-#define htp_pad_dma_preamble                                        \
-    const size_t src_row_size         = pctx->src_row_size;         \
-    const size_t src_row_size_aligned = pctx->src_row_size_aligned; \
-    const size_t dst_row_size         = pctx->dst_row_size;         \
-    const size_t dst_row_size_aligned = pctx->dst_row_size_aligned; \
-                                                                    \
+#define htp_pad_dma_preamble                                                                \
+    const size_t src_row_size         = pctx->src_row_size;                                 \
+    const size_t src_row_size_aligned = pctx->src_row_size_aligned;                         \
+    const size_t dst_row_size         = pctx->dst_row_size;                                 \
+    const size_t dst_row_size_aligned = pctx->dst_row_size_aligned;                         \
+                                                                                            \
     uint8_t * src_spad_base = octx->src0_spad.data + ith * octx->src0_spad.size_per_thread; \
     uint8_t * dst_spad_base = octx->dst_spad.data  + ith * octx->dst_spad.size_per_thread;  \
                                                                                             \
@@ -160,8 +160,8 @@ static void pad_job_per_thread_hvx(unsigned int nth, unsigned int ith, void * da
     struct htp_ops_context * octx = pctx->octx;
     htp_pad_preamble;
 
-    uint64_t t1, t2;
-    t1 = HAP_perf_get_qtimer_count();
+    struct htp_thread_trace * tr = &octx->ctx->trace[ith];
+    htp_trace_event_start(tr, HTP_TRACE_EVT_HVX_COMP, row_start);
 
     for (uint32_t dst_row = row_start; dst_row < row_end; dst_row++) {
         uint32_t i1, i2, i3;
@@ -200,18 +200,17 @@ static void pad_job_per_thread_hvx(unsigned int nth, unsigned int ith, void * da
         }
     }
 
-    t2 = HAP_perf_get_qtimer_count();
+    htp_trace_event_stop(tr, HTP_TRACE_EVT_HVX_COMP, row_start);
 
-    FARF(HIGH, "pad-hvx %d/%d: (%ux%ux%ux%u) -> (%ux%ux%ux%u) rows %u:%u usec %u\n",
+    FARF(HIGH, "pad-hvx %d/%d: (%ux%ux%ux%u) -> (%ux%ux%ux%u) rows %u:%u\n",
          ith, nth,
          src->ne[0], src->ne[1], src->ne[2], src->ne[3],
          dst->ne[0], dst->ne[1], dst->ne[2], dst->ne[3],
-         row_start, row_end,
-         (unsigned) HAP_perf_qtimer_count_to_us(t2 - t1));
+         row_start, row_end);
 }
 
 // ---------------------------------------------------------------------------
-// HVX + DMA PAD kernel — aligned, double-buffered
+// HVX + DMA PAD kernel - aligned, double-buffered
 // ---------------------------------------------------------------------------
 
 static void pad_job_per_thread_hvx_dma(unsigned int nth, unsigned int ith, void * data) {
@@ -219,9 +218,6 @@ static void pad_job_per_thread_hvx_dma(unsigned int nth, unsigned int ith, void 
     struct htp_ops_context * octx = pctx->octx;
     htp_pad_preamble;
     htp_pad_dma_preamble;
-
-    uint64_t t1, t2;
-    t1 = HAP_perf_get_qtimer_count();
 
     // -----------------------------------------------------------------------
     // Priming phase: push 2 pairs of (dummy_dst_DMA, src_DMA) to seed the
@@ -256,6 +252,8 @@ static void pad_job_per_thread_hvx_dma(unsigned int nth, unsigned int ith, void 
     // Main loop: pop completed DMAs, compute in VTCM with aligned HVX ops,
     // push dst DMA and prefetch src for the next+1 row.
     // -----------------------------------------------------------------------
+    struct htp_thread_trace * tr = &octx->ctx->trace[ith];
+
     for (uint32_t ir = row_start; ir < row_end; ir++) {
         uint8_t * dst_spad_cur = (uint8_t *) dma_queue_pop(dma_q).src;
         uint8_t * src_spad_cur = (uint8_t *) dma_queue_pop(dma_q).dst;
@@ -270,6 +268,7 @@ static void pad_job_per_thread_hvx_dma(unsigned int nth, unsigned int ith, void 
                                              lp2, rp2, ne2,
                                              lp3, rp3, ne3);
 
+        htp_trace_event_start(tr, HTP_TRACE_EVT_HVX_COMP, (uint16_t) ir);
         if (!interior) {
             hvx_splat_f32_a(dst_spad_cur, 0.0f, ne0);
         } else {
@@ -283,6 +282,7 @@ static void pad_job_per_thread_hvx_dma(unsigned int nth, unsigned int ith, void 
                 hvx_copy_f32_ua(dst_interior, src_spad_cur, ne00);
             }
         }
+        htp_trace_event_stop(tr, HTP_TRACE_EVT_HVX_COMP, (uint16_t) ir);
 
         dma_queue_push(dma_q,
             dma_make_data(dst_data, dst_spad_cur),
@@ -307,14 +307,11 @@ static void pad_job_per_thread_hvx_dma(unsigned int nth, unsigned int ith, void 
 
     dma_queue_flush(dma_q);
 
-    t2 = HAP_perf_get_qtimer_count();
-
-    FARF(HIGH, "pad-hvx-dma %d/%d: (%ux%ux%ux%u) -> (%ux%ux%ux%u) rows %u:%u usec %u\n",
+    FARF(HIGH, "pad-hvx-dma %d/%d: (%ux%ux%ux%u) -> (%ux%ux%ux%u) rows %u:%u\n",
          ith, nth,
          src->ne[0], src->ne[1], src->ne[2], src->ne[3],
          dst->ne[0], dst->ne[1], dst->ne[2], dst->ne[3],
-         row_start, row_end,
-         (unsigned) HAP_perf_qtimer_count_to_us(t2 - t1));
+         row_start, row_end);
 }
 
 // ---------------------------------------------------------------------------
@@ -326,8 +323,8 @@ static void pad_job_per_thread_hvx_circular(unsigned int nth, unsigned int ith, 
     struct htp_ops_context * octx = pctx->octx;
     htp_pad_preamble;
 
-    uint64_t t1, t2;
-    t1 = HAP_perf_get_qtimer_count();
+    struct htp_thread_trace * tr = &octx->ctx->trace[ith];
+    htp_trace_event_start(tr, HTP_TRACE_EVT_HVX_COMP, row_start);
 
     for (uint32_t dst_row = row_start; dst_row < row_end; dst_row++) {
         uint32_t i1, i2, i3;
@@ -377,18 +374,17 @@ static void pad_job_per_thread_hvx_circular(unsigned int nth, unsigned int ith, 
         }
     }
 
-    t2 = HAP_perf_get_qtimer_count();
+    htp_trace_event_stop(tr, HTP_TRACE_EVT_HVX_COMP, row_start);
 
-    FARF(HIGH, "pad-hvx-circ %d/%d: (%ux%ux%ux%u) -> (%ux%ux%ux%u) rows %u:%u usec %u\n",
+    FARF(HIGH, "pad-hvx-circ %d/%d: (%ux%ux%ux%u) -> (%ux%ux%ux%u) rows %u:%u\n",
          ith, nth,
          src->ne[0], src->ne[1], src->ne[2], src->ne[3],
          dst->ne[0], dst->ne[1], dst->ne[2], dst->ne[3],
-         row_start, row_end,
-         (unsigned) HAP_perf_qtimer_count_to_us(t2 - t1));
+         row_start, row_end);
 }
 
 // ---------------------------------------------------------------------------
-// HVX + DMA circular PAD kernel — aligned, double-buffered
+// HVX + DMA circular PAD kernel - aligned, double-buffered
 // ---------------------------------------------------------------------------
 
 static void pad_job_per_thread_hvx_circular_dma(unsigned int nth, unsigned int ith, void * data) {
@@ -396,9 +392,6 @@ static void pad_job_per_thread_hvx_circular_dma(unsigned int nth, unsigned int i
     struct htp_ops_context * octx = pctx->octx;
     htp_pad_preamble;
     htp_pad_dma_preamble;
-
-    uint64_t t1, t2;
-    t1 = HAP_perf_get_qtimer_count();
 
     // -----------------------------------------------------------------------
     // Priming phase: push 2 pairs of (dummy_dst_DMA, src_DMA) to seed the
@@ -424,6 +417,8 @@ static void pad_job_per_thread_hvx_circular_dma(unsigned int nth, unsigned int i
     // Main loop: pop completed DMAs, assemble circular row in VTCM with
     // aligned HVX ops, push dst DMA and prefetch src for the next+1 row.
     // -----------------------------------------------------------------------
+    struct htp_thread_trace * tr = &octx->ctx->trace[ith];
+
     for (uint32_t ir = row_start; ir < row_end; ir++) {
         uint8_t * dst_spad_cur = (uint8_t *) dma_queue_pop(dma_q).src;
         uint8_t * src_spad_cur = (uint8_t *) dma_queue_pop(dma_q).dst;
@@ -432,7 +427,7 @@ static void pad_job_per_thread_hvx_circular_dma(unsigned int nth, unsigned int i
         pad_decompose_row(ir, ne1, ne2, pctx->kparams, &i1, &i2, &i3);
         const dma_addr_t dst_data = dst->data + i1 * nb1 + i2 * nb2 + i3 * nb3;
 
-
+        htp_trace_event_start(tr, HTP_TRACE_EVT_HVX_COMP, (uint16_t) ir);
         if (lp0 > 0) {
             uint8_t * dst_left       = dst_spad_cur;
             const uint8_t * src_left = src_spad_cur + (size_t)(ne00 - (uint32_t)lp0) * type_size;
@@ -464,6 +459,7 @@ static void pad_job_per_thread_hvx_circular_dma(unsigned int nth, unsigned int i
                 }
             }
         }
+        htp_trace_event_stop(tr, HTP_TRACE_EVT_HVX_COMP, (uint16_t) ir);
 
         dma_queue_push(dma_q,
             dma_make_data(dst_data, dst_spad_cur),
@@ -482,14 +478,11 @@ static void pad_job_per_thread_hvx_circular_dma(unsigned int nth, unsigned int i
 
     dma_queue_flush(dma_q);
 
-    t2 = HAP_perf_get_qtimer_count();
-
-    FARF(HIGH, "pad-hvx-circ-dma %d/%d: (%ux%ux%ux%u) -> (%ux%ux%ux%u) rows %u:%u usec %u\n",
+    FARF(HIGH, "pad-hvx-circ-dma %d/%d: (%ux%ux%ux%u) -> (%ux%ux%ux%u) rows %u:%u\n",
          ith, nth,
          src->ne[0], src->ne[1], src->ne[2], src->ne[3],
          dst->ne[0], dst->ne[1], dst->ne[2], dst->ne[3],
-         row_start, row_end,
-         (unsigned) HAP_perf_qtimer_count_to_us(t2 - t1));
+         row_start, row_end);
 }
 
 int op_pad(struct htp_ops_context * octx) {
@@ -508,18 +501,6 @@ int op_pad(struct htp_ops_context * octx) {
     const int32_t rp3 = octx->op_params[7];
     const int32_t circular = octx->op_params[8];
 
-<<<<<<< HEAD
-    const uint32_t ne0  = dst->ne[0];
-    const uint32_t ne00 = src0->ne[0];
-
-    const uint32_t total_dst_rows = dst->ne[1] * dst->ne[2] * dst->ne[3];
-    const uint32_t n_threads = MIN(octx->n_threads, total_dst_rows > 0 ? total_dst_rows : 1);
-
-    const size_t src_row_size         = (size_t)ne00 * type_size;
-    const size_t dst_row_size         = (size_t)ne0  * type_size;
-    const size_t src_row_size_aligned = hex_round_up(src_row_size, VLEN);
-    const size_t dst_row_size_aligned = hex_round_up(dst_row_size, VLEN);
-=======
     const uint32_t total_dst_rows = kparams->total_rows;
     const size_t   type_size      = kparams->elem_size;
     const size_t   src_row_size   = src0->ne[0] * type_size;
@@ -549,33 +530,17 @@ int op_pad(struct htp_ops_context * octx) {
     if (!kparams->use_dma && (htp_tensor_is_extended(src0) || htp_tensor_is_extended(dst))) {
         return HTP_STATUS_NO_SUPPORT;
     }
->>>>>>> ggml-org/master
 
     struct htp_pad_vtcm_layout layout = { 0 };
     if (kparams->use_dma) {
         htp_pad_vtcm_layout_build(&layout, src_row_size, dst_row_size, n_threads);
 
-<<<<<<< HEAD
-    const int use_dma = (src0->nb[0] == (uint32_t)type_size) &&
-                        (ne00 >= 512) &&
-                        (octx->ctx->vtcm_base != NULL) &&
-                        (octx->ctx->vtcm_size >= vtcm_needed);
-
-    if (use_dma) {
-        octx->src0_spad.size_per_thread = 2 * src_row_size_aligned;
-        octx->dst_spad.size_per_thread  = 2 * dst_row_size_aligned;
-        octx->src0_spad.size = n_threads * octx->src0_spad.size_per_thread;
-        octx->dst_spad.size  = n_threads * octx->dst_spad.size_per_thread;
-        octx->src0_spad.data = octx->ctx->vtcm_base;
-        octx->dst_spad.data  = octx->src0_spad.data + octx->src0_spad.size;
-=======
         octx->src0_spad.size_per_thread = layout.src0_bytes_per_thread;
         octx->dst_spad.size_per_thread  = layout.dst_bytes_per_thread;
         octx->src0_spad.size = n_threads * layout.src0_bytes_per_thread;
         octx->dst_spad.size  = n_threads * layout.dst_bytes_per_thread;
         octx->src0_spad.data = VTCM_LAYOUT_PTR(uint8_t, octx->ctx->vtcm_base, layout.off_src0);
         octx->dst_spad.data  = VTCM_LAYOUT_PTR(uint8_t, octx->ctx->vtcm_base, layout.off_dst);
->>>>>>> ggml-org/master
         octx->src0_spad.src  = NULL;
         octx->dst_spad.src   = NULL;
     }
@@ -587,16 +552,10 @@ int op_pad(struct htp_ops_context * octx) {
         .lp1 = lp1, .rp1 = rp1,
         .lp2 = lp2, .rp2 = rp2,
         .lp3 = lp3, .rp3 = rp3,
-<<<<<<< HEAD
-        .nrows_per_thread = (total_dst_rows + n_threads - 1) / n_threads,
-        .total_dst_rows   = total_dst_rows,
-        .type_size        = type_size,
-=======
         .nrows_per_thread     = fastdiv(nrows + n_threads - 1, &octx->n_threads_div),
         .total_dst_rows       = nrows,
         .row_start            = row_start,
         .type_size            = type_size,
->>>>>>> ggml-org/master
         .src_row_size         = src_row_size,
         .src_row_size_aligned = layout.src_row_size_aligned,
         .dst_row_size         = dst_row_size,
@@ -610,12 +569,6 @@ int op_pad(struct htp_ops_context * octx) {
          dst->ne[0],  dst->ne[1],  dst->ne[2],  dst->ne[3],
          lp0, rp0, lp1, rp1, lp2, rp2, lp3, rp3);
 
-<<<<<<< HEAD
-    if      (circular && use_dma) { worker_pool_run_func(octx->ctx->worker_pool, pad_job_per_thread_hvx_circular_dma, &pctx, n_threads); }
-    else if (circular)            { worker_pool_run_func(octx->ctx->worker_pool, pad_job_per_thread_hvx_circular,     &pctx, n_threads); }
-    else if (use_dma)             { worker_pool_run_func(octx->ctx->worker_pool, pad_job_per_thread_hvx_dma,          &pctx, n_threads); }
-    else                          { worker_pool_run_func(octx->ctx->worker_pool, pad_job_per_thread_hvx,              &pctx, n_threads); }
-=======
     switch (kparams->kernel_type) {
         case HTP_PAD_KERNEL_HVX_CIRCULAR_DMA:
             work_queue_run(octx->ctx->work_queue, pad_job_per_thread_hvx_circular_dma, &pctx, n_threads);
@@ -630,8 +583,6 @@ int op_pad(struct htp_ops_context * octx) {
             work_queue_run(octx->ctx->work_queue, pad_job_per_thread_hvx,              &pctx, n_threads);
             break;
     }
->>>>>>> ggml-org/master
 
     return HTP_STATUS_OK;
 }
-

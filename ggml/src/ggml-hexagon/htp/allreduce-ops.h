@@ -2,6 +2,8 @@
 #define ALLREDUCE_OPS_H
 
 #include <stdint.h>
+#include <stddef.h>
+#include <stdbool.h>
 
 #define HTP_ALLREDUCE_MAX_RANKS 4
 
@@ -15,8 +17,6 @@ enum htp_allreduce_kernel_type {
     HTP_ALLREDUCE_KERNEL_DMA_2D,
 };
 
-<<<<<<< HEAD
-=======
 enum htp_allreduce_mode {
     HTP_ALLREDUCE_FULL           = 0, // all ranks reduce full tensor
     HTP_ALLREDUCE_SHARDED_FANOUT = 1, // each rank reduces 1/N shard and fans out to all buffers
@@ -31,7 +31,6 @@ static inline size_t htp_allreduce_vtcm_buffer_count(
     return (size_t) (n_ranks + 1) * n_threads + (has_add ? (is_row_bcast ? 1 : n_threads) : 0);
 }
 
->>>>>>> ggml-org/master
 struct htp_allreduce_kernel_params {
     uint8_t kernel_type;
     int32_t rank;

@@ -16,6 +16,23 @@
 #include <limits>
 #include <cstring>
 #include <type_traits>
+#include <chrono>
+#include <thread>
+
+#ifdef _WIN32
+// windows.h defines min and max as macros, which breaks std::min and std::max
+#define WIN32_LEAN_AND_MEAN
+#ifndef NOMINMAX
+#   define NOMINMAX
+#endif
+#include <windows.h>
+#include <io.h>
+#else
+#include <errno.h>
+#include <fcntl.h>
+#include <poll.h>
+#include <unistd.h>
+#endif
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
@@ -1181,8 +1198,7 @@ json oaicompat_completion_params_parse(const json & body) {
 void handle_media(
         std::vector<raw_buffer> & out_files,
         const std::string & url,
-        const std::string & media_path,
-        bool accept_base64_uri) {
+        const std::string & media_path) {
     if (!media_path.empty()) {
         // should already be enforced by arg.cpp, but checking just in case
         GGML_ASSERT(media_path.back() == DIRECTORY_SEPARATOR);
@@ -1223,15 +1239,17 @@ void handle_media(
         data.assign((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
         out_files.push_back(data);
 
-    } else if (accept_base64_uri && string_starts_with(url, "data:")) {
-        // try to decode base64 image
+    } else if (string_starts_with(url, "data:")) {
+        // try to decode base64 image, video, or audio
         std::vector<std::string> parts = string_split<std::string>(url, /*separator*/ ',');
         if (parts.size() != 2) {
-            throw std::runtime_error("Invalid uri-encoded base64 value");
-        } else if (!string_starts_with(parts[0], "data:image/")) {
-            throw std::runtime_error("Invalid uri format: " + parts[0]);
+            throw std::invalid_argument("Invalid uri-encoded base64 value");
+        } else if (!string_starts_with(parts[0], "data:image/")
+                && !string_starts_with(parts[0], "data:video/")
+                && !string_starts_with(parts[0], "data:audio/")) {
+            throw std::invalid_argument("Invalid uri format: " + parts[0]);
         } else if (!string_ends_with(parts[0], "base64")) {
-            throw std::runtime_error("uri must be base64 encoded");
+            throw std::invalid_argument("uri must be base64 encoded");
         } else {
             auto base64_data = parts[1];
             auto decoded_data = base64_decode(base64_data);
@@ -1409,58 +1427,7 @@ json oaicompat_chat_params_parse(
             throw std::invalid_argument("Expected 'content' to be a string or an array");
         }
 
-<<<<<<< HEAD
-        for (auto & p : content) {
-            std::string type = json_value(p, "type", std::string());
-            if (type == "image_url") {
-                if (!opt.allow_image) {
-                    throw std::runtime_error("image input is not supported - hint: if this is unexpected, you may need to provide the mmproj");
-                }
-
-                json image_url = json_value(p, "image_url", json::object());
-                std::string url = json_value(image_url, "url", std::string());
-                handle_media(out_files, url, opt.media_path, true);
-
-                p["type"] = "media_marker";
-                p["text"] = get_media_marker();
-                p.erase("image_url");
-
-            } else if (type == "input_audio") {
-                if (!opt.allow_audio) {
-                    throw std::runtime_error("audio input is not supported - hint: if this is unexpected, you may need to provide the mmproj");
-                }
-
-                // note: don't need to validate "format", it's redundant
-                json input_audio = json_value(p, "input_audio", json::object());
-                std::string url  = json_value(input_audio, "data",
-                                        json_value(input_audio, "url", std::string()));
-                handle_media(out_files, url, opt.media_path, false);
-
-                p["type"] = "media_marker";
-                p["text"] = get_media_marker();
-                p.erase("input_audio");
-
-            } else if (type == "input_video") {
-                if (!opt.allow_video) {
-                    throw std::runtime_error("video input is not supported - hint: if this is unexpected, you may need to provide the mmproj");
-                }
-
-                json input_video = json_value(p, "input_video", json::object());
-                std::string url  = json_value(input_video, "data",
-                                        json_value(input_video, "url", std::string()));
-                handle_media(out_files, url, opt.media_path, false);
-
-                p["type"] = "media_marker";
-                p["text"] = get_media_marker();
-                p.erase("input_video");
-
-            } else if (type != "text") {
-                throw std::invalid_argument("unsupported content[].type");
-            }
-        }
-=======
         oaicompat_content_load_media(content, opt, out_files);
->>>>>>> ggml-org/master
     }
 
     auto caps = common_chat_templates_get_caps(opt.tmpls.get());
@@ -2071,8 +2038,6 @@ server_tokens format_prompt_rerank(
 
     return result;
 }
-<<<<<<< HEAD
-=======
 
 //
 // server_subproc
@@ -2245,4 +2210,3 @@ void server_subproc::waiter::wait(const std::vector<server_subproc *> & procs, s
     }
 #endif
 }
->>>>>>> ggml-org/master

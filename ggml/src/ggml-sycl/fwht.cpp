@@ -1,6 +1,50 @@
 #include "fwht.hpp"
 
 #include <cmath>
+#define P 1.0f
+#define N -1.0f
+
+// constant Hadamard matrix via Paley I construction
+static constexpr float H12[12][12] = {
+    { P, P, P, P, P, P, P, P, P, P, P, P },
+    { P, N, P, N, P, P, P, N, N, N, P, N },
+    { P, N, N, P, N, P, P, P, N, N, N, P },
+    { P, P, N, N, P, N, P, P, P, N, N, N },
+    { P, N, P, N, N, P, N, P, P, P, N, N },
+    { P, N, N, P, N, N, P, N, P, P, P, N },
+    { P, N, N, N, P, N, N, P, N, P, P, P },
+    { P, P, N, N, N, P, N, N, P, N, P, P },
+    { P, P, P, N, N, N, P, N, N, P, N, P },
+    { P, P, P, P, N, N, N, P, N, N, P, N },
+    { P, N, P, P, P, N, N, N, P, N, N, P },
+    { P, P, N, P, P, P, N, N, N, P, N, N }
+};
+
+static constexpr float H20[20][20] = {
+    { P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P, P },
+    { P, N, P, N, N, P, P, P, P, N, P, N, P, N, N, N, N, P, P, N },
+    { P, N, N, P, N, N, P, P, P, P, N, P, N, P, N, N, N, N, P, P },
+    { P, P, N, N, P, N, N, P, P, P, P, N, P, N, P, N, N, N, N, P },
+    { P, P, P, N, N, P, N, N, P, P, P, P, N, P, N, P, N, N, N, N },
+    { P, N, P, P, N, N, P, N, N, P, P, P, P, N, P, N, P, N, N, N },
+    { P, N, N, P, P, N, N, P, N, N, P, P, P, P, N, P, N, P, N, N },
+    { P, N, N, N, P, P, N, N, P, N, N, P, P, P, P, N, P, N, P, N },
+    { P, N, N, N, N, P, P, N, N, P, N, N, P, P, P, P, N, P, N, P },
+    { P, P, N, N, N, N, P, P, N, N, P, N, N, P, P, P, P, N, P, N },
+    { P, N, P, N, N, N, N, P, P, N, N, P, N, N, P, P, P, P, N, P },
+    { P, P, N, P, N, N, N, N, P, P, N, N, P, N, N, P, P, P, P, N },
+    { P, N, P, N, P, N, N, N, N, P, P, N, N, P, N, N, P, P, P, P },
+    { P, P, N, P, N, P, N, N, N, N, P, P, N, N, P, N, N, P, P, P },
+    { P, P, P, N, P, N, P, N, N, N, N, P, P, N, N, P, N, N, P, P },
+    { P, P, P, P, N, P, N, P, N, N, N, N, P, P, N, N, P, N, N, P },
+    { P, P, P, P, P, N, P, N, P, N, N, N, N, P, P, N, N, P, N, N },
+    { P, N, P, P, P, P, N, P, N, P, N, N, N, N, P, P, N, N, P, N },
+    { P, N, N, P, P, P, P, N, P, N, P, N, N, N, N, P, P, N, N, P },
+    { P, P, N, N, P, P, P, P, N, P, N, P, N, N, N, N, P, P, N, N }
+};
+
+#undef P
+#undef N
 
 template <int N, typename T>
 static void fwht_kernel(const T * __restrict__ src, float * __restrict__ dst, const int64_t n_rows,
@@ -80,19 +124,6 @@ static void launch_fwht(const T * src, float * dst, const int64_t n_rows, const 
                          });
 }
 
-<<<<<<< HEAD
-bool ggml_sycl_op_fwht(ggml_backend_sycl_context & ctx, const ggml_tensor * src, ggml_tensor * dst) {
-    if (src->type != GGML_TYPE_F32 || dst->type != GGML_TYPE_F32) {
-        return false;
-    }
-    if (!ggml_are_same_shape(src, dst)) {
-        return false;
-    }
-    if (!ggml_is_contiguous(src) || !ggml_is_contiguous(dst)) {
-        return false;
-    }
-
-=======
 // Wide blocks: one row per work-group instead of per sub-group, so each work-item
 // keeps N/NT values rather than N/WARP_SIZE. Butterflies below the sub-group width
 // still shuffle; those up to NT go through work-group local memory; the rest stay
@@ -312,7 +343,6 @@ static void launch_kronecker(const T *       src,
 
 template <typename T>
 static bool ggml_sycl_op_fwht_impl(ggml_backend_sycl_context & ctx, const ggml_tensor * src, ggml_tensor * dst) {
->>>>>>> ggml-org/master
     const int     n    = (int) src->ne[0];
     const int64_t rows = ggml_nrows(src);
 
@@ -335,8 +365,6 @@ static bool ggml_sycl_op_fwht_impl(ggml_backend_sycl_context & ctx, const ggml_t
         case 512:
             launch_fwht<512>(src_d, dst_d, rows, scale, stream);
             return true;
-<<<<<<< HEAD
-=======
         case 384:
             launch_kronecker<384, 12>(src_d, dst_d, rows, scale, stream);
             return true;
@@ -382,7 +410,6 @@ bool ggml_sycl_op_fwht(ggml_backend_sycl_context & ctx, const ggml_tensor * src,
             return ggml_sycl_op_fwht_impl<float>(ctx, src, dst);
         case GGML_TYPE_F16:
             return ggml_sycl_op_fwht_impl<sycl::half>(ctx, src, dst);
->>>>>>> ggml-org/master
         default:
             return false;
     }

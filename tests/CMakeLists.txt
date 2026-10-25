@@ -21,12 +21,8 @@ function(llama_build source)
     endif()
 
     add_executable(${TEST_TARGET} ${TEST_SOURCES})
-<<<<<<< HEAD
-    target_link_libraries(${TEST_TARGET} PRIVATE llama llama-common)
-=======
     target_compile_features(${TEST_TARGET} PRIVATE cxx_std_17)
     target_link_libraries(${TEST_TARGET} PRIVATE ${LLAMA_BUILD_LINK})
->>>>>>> ggml-org/master
     if (LLAMA_TESTS_INSTALL)
         install(TARGETS ${TEST_TARGET} RUNTIME)
     endif()
@@ -227,13 +223,9 @@ if (NOT WIN32 OR NOT BUILD_SHARED_LIBS)
 
     # llama_build_and_test(test-double-float.cpp) # SLOW
 
-<<<<<<< HEAD
-    llama_build_and_test(test-llama-archs.cpp)
-=======
     # TODO: after `test-llama-archs` is refactored to not link internal symbols, we can move all related tests out of
     #       this branch and run them on all platforms
     llama_build(test-llama-archs.cpp)
->>>>>>> ggml-org/master
 
     set(MODEL_DIR "${CMAKE_CURRENT_BINARY_DIR}/test-models/")
     file(MAKE_DIRECTORY "${MODEL_DIR}")
@@ -248,44 +240,28 @@ if (NOT WIN32 OR NOT BUILD_SHARED_LIBS)
         FIXTURES_SETUP generate-models
     )
 
+    # Target model for test-speculative-rejection-sampling
+    set(SPEC_TARGET_DIR "${CMAKE_CURRENT_BINARY_DIR}/test-speculative-models/target")
+    file(MAKE_DIRECTORY "${SPEC_TARGET_DIR}")
+    llama_test(
+        test-llama-archs
+        NAME test-generate-speculative-target
+        LABEL main
+        ARGS -a llama -s 999 -o "${SPEC_TARGET_DIR}"
+    )
+    set_tests_properties(
+        test-generate-speculative-target
+        PROPERTIES FIXTURES_SETUP speculative-model
+    )
+
+    # To avoid recreating the model use the fixture exclude any option:
+    # -FA "^speculative-model$"
+    llama_build_and_test(test-speculative-rejection-sampling.cpp ARGS
+        -m "${SPEC_TARGET_DIR}/llama-dense.gguf")
+    set_tests_properties(test-speculative-rejection-sampling PROPERTIES FIXTURES_REQUIRED speculative-model)
+
     # Test context state handling across all architectures, using the generated dummy models
     llama_test(
-<<<<<<< HEAD
-        test-recurrent-state-rollback
-        LABEL main
-        ARGS -m "${MODEL_DIR}/qwen35-dense.gguf"
-    )
-    set_tests_properties(test-recurrent-state-rollback PROPERTIES
-        FIXTURES_REQUIRED generate-models
-    )
-
-    llama_test(
-        test-recurrent-state-rollback
-        NAME test-recurrent-state-rollback-nemotron-h
-        LABEL main
-        ARGS -m "${MODEL_DIR}/nemotron_h-dense.gguf"
-    )
-    set_tests_properties(test-recurrent-state-rollback-nemotron-h PROPERTIES
-        FIXTURES_REQUIRED generate-models
-    )
-    llama_test(
-        test-recurrent-state-rollback
-        NAME test-recurrent-state-rollback-dsv4
-        LABEL main
-        ARGS -m "${MODEL_DIR}/deepseek4-moe.gguf"
-    )
-    set_tests_properties(test-recurrent-state-rollback-dsv4 PROPERTIES
-        FIXTURES_REQUIRED generate-models
-    )
-
-    # Test state save/load functionality across all architectures, using the generated dummy models
-    llama_test(
-        test-save-load-state
-        LABEL main
-        ARGS --models "${MODEL_DIR}"
-    )
-    set_tests_properties(test-save-load-state PROPERTIES FIXTURES_REQUIRED generate-models)
-=======
         test-llama-context
         LABEL "main behavior backend"
         ARGS --models "${MODEL_DIR}"
@@ -297,7 +273,6 @@ if (NOT WIN32 OR NOT BUILD_SHARED_LIBS)
     )
 
     llama_build(test-fusion.cpp)
->>>>>>> ggml-org/master
 endif()
 
 llama_build_and_test(test-chat-peg-parser.cpp peg-parser/simple-tokenize.cpp  LABEL behavior)
@@ -359,12 +334,8 @@ if (GGML_METAL AND NOT GGML_BACKEND_DL)
     llama_build_and_test(test-metal-graph-optimize.cpp  LABEL "main behavior backend"  LINK ggml ggml-metal)
     target_include_directories(test-metal-graph-optimize PRIVATE ${PROJECT_SOURCE_DIR}/ggml/src ${PROJECT_SOURCE_DIR}/ggml/src/ggml-metal)
 endif()
-<<<<<<< HEAD
-llama_build_and_test(test-backend-ops.cpp)
-=======
 
 llama_build(test-backend-ops.cpp LINK ggml)
->>>>>>> ggml-org/master
 
 llama_build_and_test(test-tiled-mulmat.cpp  LABEL "main behavior backend"  LINK ggml)
 llama_build_and_test(test-model-load-cancel.cpp LABEL "model behavior")

@@ -140,6 +140,7 @@ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_mm
 struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm            (ggml_metal_library_t lib, const struct ggml_tensor * op);
 struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv            (ggml_metal_library_t lib, const struct ggml_tensor * op);
 struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm_id_map0    (ggml_metal_library_t lib, int ne02, int ne20);
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm_id_zero    (ggml_metal_library_t lib);
 struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm_id_amax(ggml_metal_library_t lib);
 struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm_id_amax_part(ggml_metal_library_t lib);
 struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm_id         (ggml_metal_library_t lib, const struct ggml_tensor * op);
@@ -219,6 +220,10 @@ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_flash_att
         int32_t ns10,
         int32_t ns20);
 
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_flash_attn_ext_vec_idx(
+        ggml_metal_library_t lib,
+        const struct ggml_tensor * op);
+
 struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_flash_attn_ext_vec(
         ggml_metal_library_t lib,
         const struct ggml_tensor * op,
@@ -227,6 +232,7 @@ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_flash_att
         bool    has_bias,
         bool    has_scap,
         bool    has_kvpad,
+        bool    has_sparse,
         int32_t nqpsg,
         int32_t ne,
         int32_t nsg,
@@ -277,6 +283,7 @@ enum ggml_metal_device_id {
     GGML_METAL_DEVICE_M5_PRO,
     GGML_METAL_DEVICE_M5_MAX,
     GGML_METAL_DEVICE_M5_ULTRA,
+    GGML_METAL_DEVICE_A18_PRO,
 };
 
 const char * ggml_metal_device_id_token(enum ggml_metal_device_id id);
@@ -334,6 +341,11 @@ void ggml_metal_device_get_memory(ggml_metal_device_t dev, size_t * free, size_t
 bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_tensor * op);
 
 const struct ggml_metal_device_props * ggml_metal_device_get_props(ggml_metal_device_t dev);
+
+struct ggml_metal_fusion_info;
+
+// the device-owned fusion debugging context (NULL unless fusion debugging is enabled)
+struct ggml_metal_fusion_info * ggml_metal_device_get_fusion_info(ggml_metal_device_t dev);
 
 //
 // device buffers

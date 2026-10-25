@@ -4,10 +4,6 @@
 // `error` fields. The path is display-only (block title), so a call
 // that has not streamed one still shows its diffs.
 
-<<<<<<< HEAD
-import { parseToolArgs } from './_shared';
-import { FILE_PATH_SEPARATOR_REGEX } from '$lib/constants';
-=======
 import {
 	extractToolArgPath,
 	extractToolArgString,
@@ -15,24 +11,9 @@ import {
 	parseToolArgs
 } from './_shared';
 import { TOOL_ARG_PATH_KEYS } from '$lib/constants';
->>>>>>> ggml-org/master
 import { BuiltInTool } from '$lib/enums';
-import type { AgenticSection } from '$lib/types';
+import type { AgenticSection, EditFileEdit, EditFileMeta, EditFileTitleMeta } from '$lib/types';
 import { tryParseToolResultObject } from '$lib/utils';
-
-export type EditFileEdit = {
-	oldText: string;
-	newText: string;
-};
-
-export type EditFileMeta = {
-	fileName: string;
-	filePath: string;
-	edits: EditFileEdit[];
-	resultMessage?: string;
-	editsApplied?: number;
-	errorMessage?: string;
-};
 
 export function parseEditFileMeta(section: AgenticSection): EditFileMeta | null {
 	const args = parseToolArgs(BuiltInTool.SERVER_EDIT_FILE, section, { partial: true });
@@ -87,8 +68,6 @@ export function parseEditFileMeta(section: AgenticSection): EditFileMeta | null 
 		resultMessage
 	};
 }
-<<<<<<< HEAD
-=======
 
 /**
  * Title-tier meta for edit_file blocks: everything the header and status
@@ -128,4 +107,3 @@ export function parseEditFileTitleMeta(section: AgenticSection): EditFileTitleMe
 
 	return { editsApplied, errorMessage, fileName, filePath, resultMessage };
 }
->>>>>>> ggml-org/master

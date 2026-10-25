@@ -19,45 +19,10 @@
 #include "ggml-common.h"
 #include "htp-ctx.h"
 #include "htp-ops.h"
-<<<<<<< HEAD
-#include "htp-ops.h"
-
-#define htp_softmax_preamble3                     \
-    const uint32_t ne00 = src0->ne[0];            \
-    const uint32_t ne01 = src0->ne[1];            \
-    const uint32_t ne02 = src0->ne[2];            \
-    const uint32_t ne03 = src0->ne[3];            \
-                                                  \
-    const uint32_t nb00 = src0->nb[0];            \
-    const uint32_t nb01 = src0->nb[1];            \
-    const uint32_t nb02 = src0->nb[2];            \
-    const uint32_t nb03 = src0->nb[3];            \
-                                                  \
-    const uint32_t ne10 = src1 ? src1->ne[0] : 1; \
-    const uint32_t ne11 = src1 ? src1->ne[1] : 1; \
-    const uint32_t ne12 = src1 ? src1->ne[2] : 1; \
-    const uint32_t ne13 = src1 ? src1->ne[3] : 1; \
-                                                  \
-    const uint32_t nb10 = src1 ? src1->nb[0] : 1; \
-    const uint32_t nb11 = src1 ? src1->nb[1] : 1; \
-    const uint32_t nb12 = src1 ? src1->nb[2] : 1; \
-    const uint32_t nb13 = src1 ? src1->nb[3] : 1; \
-                                                  \
-    const uint32_t ne0 = dst->ne[0];              \
-    const uint32_t ne1 = dst->ne[1];              \
-    const uint32_t ne2 = dst->ne[2];              \
-    const uint32_t ne3 = dst->ne[3];              \
-                                                  \
-    const uint32_t nb0 = dst->nb[0];              \
-    const uint32_t nb1 = dst->nb[1];              \
-    const uint32_t nb2 = dst->nb[2];              \
-    const uint32_t nb3 = dst->nb[3];
-=======
 #include "htp-tensor.h"
 #include "htp-vtcm.h"
 #include "htp/softmax-ops.h"
 #include "hvx-flash-attn.h"
->>>>>>> ggml-org/master
 
 struct htp_softmax_context {
     struct htp_ops_context * octx;
@@ -101,13 +66,10 @@ struct htp_softmax_context {
     struct fastdiv_values div_ne13;
 
     uint32_t src0_nrows_per_thread;
-<<<<<<< HEAD
-=======
     uint32_t row_start;
     uint32_t nrows;
 
     float    slopes[512] __attribute__((aligned(128)));
->>>>>>> ggml-org/master
 };
 
 typedef void (*softmax_compute_fn_t)(
@@ -333,25 +295,18 @@ static void softmax_thread_dma(unsigned int nth, unsigned int ith, void * data) 
     const struct htp_tensor * dst  = octx->dst;
     struct htp_thread_trace * tr = &octx->ctx->trace[ith];
 
-    const uint32_t src0_nrows            = ne01 * ne02 * ne03;  // src0 rows
+    const uint32_t src0_nrows            = smctx->nrows;
     const uint32_t src0_nrows_per_thread = smctx->src0_nrows_per_thread;
 
-    const uint32_t src0_start_row = src0_nrows_per_thread * ith;
-    const uint32_t src0_end_row   = MIN(src0_start_row + src0_nrows_per_thread, src0_nrows);
+    const uint32_t src0_start_row = smctx->row_start + src0_nrows_per_thread * ith;
+    const uint32_t src0_end_row   = MIN(src0_start_row + src0_nrows_per_thread, smctx->row_start + src0_nrows);
 
     if (src0_start_row >= src0_end_row) {
         return;
     }
 
-<<<<<<< HEAD
-    uint64_t qt = HAP_perf_get_qtimer_count();
-
-    int is_aligned = 1;
-    int opt_path   = 0;
-=======
     const dma_addr_t data_src0 = smctx->data_src0;
     const dma_addr_t data_dst  = smctx->data_dst;
->>>>>>> ggml-org/master
 
     const size_t src0_row_size = src0->ne[0] * sizeof(float);
     const size_t dst_row_size  = src0->ne[0] * sizeof(float);
@@ -376,28 +331,8 @@ static void softmax_thread_dma(unsigned int nth, unsigned int ith, void * data) 
                        smctx->src0_row_size_aligned, src0_row_size, src0_row_size, 1);
     }
 
-<<<<<<< HEAD
-    // Only use the fast path when aligned AND row size is multiple of VLEN (128 bytes)
-    // The fast path (hvx_fast_softmax_f32) doesn't handle tail elements
-    // The non-opt path uses hvx_softmax_f32 which properly handles all sizes via its helper functions
-    if ((1 == is_aligned) && !(nb01 & (VLEN - 1))) {
-        opt_path = 1;
-    }
-
-    uint8_t * src0_spad_data = octx->src0_spad.data + (ith * octx->src0_spad.size_per_thread);
-    uint8_t * src1_spad_data = octx->src1_spad.data + (ith * octx->src1_spad.size_per_thread);
-    uint8_t * dst_spad_data  = octx->dst_spad.data  + (ith * octx->dst_spad.size_per_thread);
-
-    float * wp0 = (float *) src0_spad_data;
-    float * wp1 = (float *) src1_spad_data;
-    float * wp2 = (float *) dst_spad_data;
-
-    uint32_t prev_i2 = (uint32_t)-1;
-    float slope = 1.0f;
-=======
     softmax_compute_fn_t compute = (softmax_compute_fn_t) smctx->compute;
     const uint32_t ne00 = src0->ne[0];
->>>>>>> ggml-org/master
 
     for (uint32_t r = src0_start_row; r < src0_end_row; ++r) {
         void * d_spad = (void *) dma_queue_pop(dma_q).src;
@@ -419,14 +354,7 @@ static void softmax_thread_dma(unsigned int nth, unsigned int ith, void * data) 
         }
     }
 
-<<<<<<< HEAD
-    qt = HAP_perf_qtimer_count_to_us(HAP_perf_get_qtimer_count() - qt);
-    FARF(HIGH, "softmax-f32 %d/%d: %ux%ux%ux%u (%u:%u) x %ux%ux%ux%u -> %ux%ux%ux%u : opt %u f16 %u usec %u\n", ith, nth,
-         ne00, ne01, ne02, ne03, src0_start_row, src0_end_row, ne10, ne11, ne12, ne13,
-         ne0, ne1, ne2, ne3, opt_path, smctx->use_f16, (unsigned) qt);
-=======
     dma_queue_flush(dma_q);
->>>>>>> ggml-org/master
 }
 
 static void softmax_thread_mask_dma(unsigned int nth, unsigned int ith, void * data) {
@@ -579,15 +507,6 @@ static int execute_op_softmax_f32(struct htp_ops_context * octx) {
     }
 
     const uint32_t src0_nrows = src0->ne[1] * src0->ne[2] * src0->ne[3];
-<<<<<<< HEAD
-    const uint32_t n_threads  = MIN(octx->n_threads, src0_nrows);
-
-    smctx.src0_nrows_per_thread = (src0_nrows + n_threads - 1) / n_threads;
-
-    const size_t src0_row_size = src0->nb[1];
-    const size_t src1_row_size = src0_row_size;
-    const size_t dst_row_size  = dst->nb[1];
-=======
     const size_t elem_size    = sizeof(float);
     const size_t dst_row_size = dst->nb[1];
 
@@ -625,7 +544,6 @@ static int execute_op_softmax_f32(struct htp_ops_context * octx) {
         .octx                  = octx,
         .kparams               = kparams,
         .compute               = (void *) softmax_kernels[kparams->kernel_type],
->>>>>>> ggml-org/master
 
         .data_src0             = src0->data,
         .data_src1             = kparams->use_src1 ? octx->src[1]->data : 0,
@@ -680,19 +598,7 @@ static int execute_op_softmax_f32(struct htp_ops_context * octx) {
     work_queue_func_t task_func = kparams->use_src1 ? softmax_thread_mask_dma : softmax_thread_dma;
     work_queue_run(octx->ctx->work_queue, task_func, &smctx, n_threads);
 
-<<<<<<< HEAD
-    octx->src0_spad.data = octx->ctx->vtcm_base;                        octx->src0_spad.src = NULL;
-    octx->src1_spad.data = octx->src0_spad.data + octx->src0_spad.size; octx->src1_spad.src = NULL;
-    octx->dst_spad.data  = octx->src1_spad.data + octx->src1_spad.size; octx->dst_spad.src  = NULL;
-
-    if (octx->flags & HTP_OPFLAGS_SKIP_COMPUTE) return err;
-
-    worker_pool_run_func(octx->ctx->worker_pool, softmax_job_f32, &smctx, n_threads);
-
-    return err;
-=======
     return HTP_STATUS_OK;
->>>>>>> ggml-org/master
 }
 
 int op_softmax(struct htp_ops_context * octx) {

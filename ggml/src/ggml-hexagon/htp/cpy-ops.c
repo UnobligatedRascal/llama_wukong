@@ -14,18 +14,11 @@
 #include "cpy-ops.h"
 #include "dma-copy.h"
 #include "htp-ctx.h"
-<<<<<<< HEAD
-#include "htp-ops.h"
-#include "htp-ops.h"
-#include "hvx-utils.h"
-#include "htp-tensor.h"
-=======
 #include "htp-fence.h"
 #include "htp-ops.h"
 #include "htp-tensor.h"
 #include "hvx-utils.h"
 #include "gather-rows.h"
->>>>>>> ggml-org/master
 
 struct htp_copy_context {
     struct htp_ops_context *              octx;
@@ -39,16 +32,9 @@ struct htp_copy_context {
     uint32_t nelem;
     uint32_t elem_per_thread;
 
-<<<<<<< HEAD
-    uint32_t          src0_blocks_per_row;
-    uint32_t          dst_blocks_per_row;
-
-    uint32_t          src0_nrows_per_thread;
-=======
     struct htp_copy_convert_vtcm_layout layout;
     uint8_t * vtcm_src0;
     uint8_t * vtcm_dst;
->>>>>>> ggml-org/master
 };
 
 #define cpy_preamble                              \
@@ -73,133 +59,8 @@ struct htp_copy_context {
     const uint32_t  nb0 = dst->nb[0];             \
     const uint32_t  nb1 = dst->nb[1];             \
     const uint32_t  nb2 = dst->nb[2];             \
-    const uint32_t  nb3 = dst->nb[3];             \
-                                                  \
-    const uint32_t   nr = ne01;
+    const uint32_t  nb3 = dst->nb[3];
 
-<<<<<<< HEAD
-#define DEFINE_CPY_SAMESHAPE(NAME, ELEM_TYPE, ELEM_SIZE)                                                       \
-static void cpy_thread_##NAME##_sameshape(unsigned int nth, unsigned int ith, void * data) {                   \
-    struct htp_copy_context * ct = (struct htp_copy_context *) data;                                           \
-    struct htp_ops_context * octx = ct->octx;                                                                  \
-    cpy_preamble;                                                                                              \
-    const uint32_t dr  = ct->src0_nrows_per_thread;                                                            \
-    const uint32_t ir0 = dr * ith;                                                                             \
-    const uint32_t ir1 = (ir0 + dr) < nr ? (ir0 + dr) : nr;                                                    \
-    if (ir0 >= nr) return;                                                                                     \
-    for (uint32_t i03 = 0; i03 < ne03; i03++) {                                                                \
-        for (uint32_t i02 = 0; i02 < ne02; i02++) {                                                            \
-            _Pragma("unroll(4)")                                                                               \
-            for (uint32_t i01 = ir0; i01 < ir1; i01++) {                                                       \
-                uint8_t* dst_ptr  = (uint8_t*) dst->data  + i01*nb1  + i02*nb2  + i03*nb3;                     \
-                uint8_t* src0_ptr = (uint8_t*) src0->data + i01*nb01 + i02*nb02 + i03*nb03;                    \
-                hex_l2fetch(src0_ptr, ne00 * ELEM_SIZE, nb01, 2);                                              \
-                hvx_copy_uu(dst_ptr, src0_ptr, ne00, ELEM_SIZE);                                               \
-            }                                                                                                  \
-        }                                                                                                      \
-    }                                                                                                          \
-}
-
-DEFINE_CPY_SAMESHAPE(f32,  float, 4)
-DEFINE_CPY_SAMESHAPE(f16, __fp16, 2)
-
-#define DEFINE_CPY_RESHAPE(NAME, ELEM_TYPE, ELEM_SIZE)                                                         \
-static void cpy_thread_##NAME##_reshape(unsigned int nth, unsigned int ith, void * data) {                     \
-    struct htp_copy_context * ct = (struct htp_copy_context *) data;                                           \
-    struct htp_ops_context * octx = ct->octx;                                                                  \
-    cpy_preamble;                                                                                              \
-    const uint32_t dr  = ct->src0_nrows_per_thread;                                                            \
-    const uint32_t ir0 = dr * ith;                                                                             \
-    const uint32_t ir1 = (ir0 + dr) < nr ? (ir0 + dr) : nr;                                                    \
-    if (ir0 >= nr) return;                                                                                     \
-    const bool src0_contig = (nb00 == ELEM_SIZE)   &&                                                          \
-                             (nb01 == ne00 * nb00) &&                                                          \
-                             (nb02 == ne01 * nb01) &&                                                          \
-                             (nb03 == ne02 * nb02);                                                            \
-    const bool dst_contig  = (nb0  == ELEM_SIZE)   &&                                                          \
-                             (nb1  == ne0  * nb0)  &&                                                          \
-                             (nb2  == ne1  * nb1)  &&                                                          \
-                             (nb3  == ne2  * nb2);                                                             \
-    if (src0_contig && dst_contig) {                                                                           \
-        for (int64_t i03 = 0; i03 < ne03; i03++) {                                                             \
-            for (int64_t i02 = 0; i02 < ne02; i02++) {                                                         \
-                uint8_t * src_ptr = (uint8_t *) src0->data + i03*nb03 + i02*nb02 + ir0*nb01;                   \
-                uint32_t  flat    = ((i03*ne02 + i02)*ne01 + ir0) * ne00;                                      \
-                uint8_t * dst_ptr = (uint8_t *) dst->data  + flat * ELEM_SIZE;                                 \
-                hvx_copy_uu(dst_ptr, src_ptr, (ir1 - ir0) * ne00, ELEM_SIZE);                                  \
-            }                                                                                                  \
-        }                                                                                                      \
-        return;                                                                                                \
-    }                                                                                                          \
-    const bool reshape_flat_fast = (ne03 == 1 && ne2 == 1 && ne3 == 1) &&                                      \
-                                   (ne0 == ne00 * ne01) && (ne1 == ne02) &&                                    \
-                                   (nb00 == ELEM_SIZE) && (nb0 == ELEM_SIZE);                                  \
-    if (reshape_flat_fast) {                                                                                   \
-        for (uint32_t i02 = 0; i02 < ne02; i02++) {                                                            \
-            for (uint32_t i01 = ir0; i01 < ir1; i01++) {                                                       \
-                uint8_t * src0_ptr = (uint8_t *) src0->data + i01 * nb01 + i02 * nb02;                         \
-                uint8_t * dst_ptr  = (uint8_t *) dst->data  + i01 * ne00 * ELEM_SIZE + i02 * nb1;              \
-                hvx_copy_uu(dst_ptr, src0_ptr, ne00, ELEM_SIZE);                                               \
-            }                                                                                                  \
-        }                                                                                                      \
-        return;                                                                                                \
-    }                                                                                                          \
-    int64_t k10 = 0;                                                                                           \
-    int64_t i11 = 0;                                                                                           \
-    int64_t i12 = 0;                                                                                           \
-    int64_t i13 = 0;                                                                                           \
-    const int64_t nk00 = ct->src0_blocks_per_row;                                                              \
-    const int64_t nk0  = ct->dst_blocks_per_row;                                                               \
-    for (int64_t i03 = 0; i03 < ne03; i03++) {                                                                 \
-        for (int64_t i02 = 0; i02 < ne02; i02++) {                                                             \
-            k10 += nk00 * ir0;                                                                                 \
-            while (k10 >= nk0) {                                                                               \
-                k10 -= nk0;                                                                                    \
-                if (++i11 == ne1) {                                                                            \
-                    i11 = 0;                                                                                   \
-                    if (++i12 == ne2) {                                                                        \
-                        i12 = 0;                                                                               \
-                        if (++i13 == ne3) {                                                                    \
-                            i13 = 0;                                                                           \
-                        }                                                                                      \
-                    }                                                                                          \
-                }                                                                                              \
-            }                                                                                                  \
-            for (int64_t i01 = ir0; i01 < ir1; i01++) {                                                        \
-                for (int64_t k00 = 0; k00 < nk00; k00++) {                                                     \
-                    const char * src0_ptr = ((char *) src0->data + k00*nb00 + i01*nb01 + i02*nb02 + i03*nb03); \
-                          char * dst_ptr  = ((char *)  dst->data + k10*nb0  + i11*nb1  + i12*nb2  + i13*nb3);  \
-                    memcpy(dst_ptr, src0_ptr, ELEM_SIZE);                                                      \
-                    if (++k10 == nk0) {                                                                        \
-                        k10 = 0;                                                                               \
-                        if (++i11 == ne1) {                                                                    \
-                            i11 = 0;                                                                           \
-                            if (++i12 == ne2) {                                                                \
-                                i12 = 0;                                                                       \
-                                if (++i13 == ne3) {                                                            \
-                                    i13 = 0;                                                                   \
-                                }                                                                              \
-                            }                                                                                  \
-                        }                                                                                      \
-                    }                                                                                          \
-                }                                                                                              \
-            }                                                                                                  \
-            k10 += nk00 * (ne01 - ir1);                                                                        \
-            while (k10 >= nk0) {                                                                               \
-                k10 -= nk0;                                                                                    \
-                if (++i11 == ne1) {                                                                            \
-                    i11 = 0;                                                                                   \
-                    if (++i12 == ne2) {                                                                        \
-                        i12 = 0;                                                                               \
-                        if (++i13 == ne3) {                                                                    \
-                            i13 = 0;                                                                           \
-                        }                                                                                      \
-                    }                                                                                          \
-                }                                                                                              \
-            }                                                                                                  \
-        }                                                                                                      \
-    }                                                                                                          \
-=======
 #define DEFINE_CPY_RESHAPE(NAME, ELEM_TYPE, ELEM_SIZE)                                                \
 static void cpy_thread_##NAME##_reshape(unsigned int nth, unsigned int ith, void * data) {            \
     struct htp_copy_context * ct = (struct htp_copy_context *) data;                                  \
@@ -276,7 +137,6 @@ static void cpy_thread_##NAME##_reshape(unsigned int nth, unsigned int ith, void
         }                                                                                             \
     }                                                                                                 \
     dma_queue_flush(dma_q);                                                                           \
->>>>>>> ggml-org/master
 }
 
 DEFINE_CPY_RESHAPE(f32,  float, 4)
@@ -290,24 +150,6 @@ struct cpy_row_cursor {
     uint32_t i03;
 };
 
-<<<<<<< HEAD
-    // parallelize by src0 rows
-    const uint32_t dr  = ct->src0_nrows_per_thread;
-    const uint32_t ir0 = dr * ith;
-    const uint32_t ir1 = (ir0 + dr) < nr ? (ir0 + dr) : nr;
-    if (ir0 >= nr) return;
-
-    // copy by rows
-    for (uint32_t i03 = 0; i03 < ne03; i03++) {
-        for (uint32_t i02 = 0; i02 < ne02; i02++) {
-            #pragma unroll(2)
-            for (uint32_t i01 = ir0; i01 < ir1; i01++) {
-                uint8_t* dst_ptr  = (uint8_t*) dst->data  + i01*nb1  + i02*nb2  + i03*nb3;
-                uint8_t* src0_ptr = (uint8_t*) src0->data + i01*nb01 + i02*nb02 + i03*nb03;
-                hex_l2fetch(src0_ptr, ne00 * sizeof(float), nb01, 2);
-                hvx_copy_f16_f32_uu(dst_ptr, src0_ptr, ne00);
-            }
-=======
 static inline void cpy_cursor_advance(struct cpy_row_cursor * c, uint32_t n, uint32_t ne01, uint32_t ne02) {
     c->r   += n;
     c->i01 += n;
@@ -316,36 +158,10 @@ static inline void cpy_cursor_advance(struct cpy_row_cursor * c, uint32_t n, uin
         if (++c->i02 == ne02) {
             c->i02 = 0;
             c->i03++;
->>>>>>> ggml-org/master
         }
     }
 }
 
-<<<<<<< HEAD
-static void cpy_thread_f32_f16_sameshape(unsigned int nth, unsigned int ith, void * data) {
-    struct htp_copy_context * ct = (struct htp_copy_context *) data;
-    struct htp_ops_context * octx = ct->octx;
-    cpy_preamble;
-
-    // parallelize by src0 rows
-    const uint32_t dr  = ct->src0_nrows_per_thread;
-    const uint32_t ir0 = dr * ith;
-    const uint32_t ir1 = (ir0 + dr) < nr ? (ir0 + dr) : nr;
-    if (ir0 >= nr) return;
-
-    // copy by rows
-    for (uint32_t i03 = 0; i03 < ne03; i03++) {
-        for (uint32_t i02 = 0; i02 < ne02; i02++) {
-            #pragma unroll(2)
-            for (uint32_t i01 = ir0; i01 < ir1; i01++) {
-                uint8_t* dst_ptr  = (uint8_t*) dst->data  + i01*nb1  + i02*nb2  + i03*nb3;
-                uint8_t* src0_ptr = (uint8_t*) src0->data + i01*nb01 + i02*nb02 + i03*nb03;
-                hex_l2fetch(src0_ptr, ne00 * sizeof(__fp16), nb01, 2);
-                hvx_copy_f32_f16_uu(dst_ptr, src0_ptr, ne00);
-            }
-        }
-    }
-=======
 #define DEFINE_CPY_CONVERT_SAMESHAPE(NAME, CONV_FUNC)                                        \
 static void cpy_thread_##NAME##_sameshape(unsigned int nth, unsigned int ith, void * data) { \
     struct htp_copy_context * ct = (struct htp_copy_context *) data;                         \
@@ -418,7 +234,6 @@ static void cpy_thread_##NAME##_sameshape(unsigned int nth, unsigned int ith, vo
         }                                                                                    \
     }                                                                                        \
     dma_queue_flush(dma_q);                                                                  \
->>>>>>> ggml-org/master
 }
 
 DEFINE_CPY_CONVERT_SAMESHAPE(f16_f32, hvx_copy_f16_f32_aa)
@@ -426,80 +241,6 @@ DEFINE_CPY_CONVERT_SAMESHAPE(f32_f16, hvx_copy_f32_f16_aa)
 DEFINE_CPY_CONVERT_SAMESHAPE(i32_f32, hvx_copy_i32_f32_aa)
 DEFINE_CPY_CONVERT_SAMESHAPE(f32_i32, hvx_copy_f32_i32_aa)
 
-<<<<<<< HEAD
-    dma_queue * q = octx->ctx->dma[0];
-
-    if (contiguous_outer) {
-        dma_queue_push(q, dma_make_ptr((void *) dst->data, (const void *) src0->data), nb1, nb01, ne00 * elem_size, ne01 * ne02 * ne03);
-        dma_queue_pop(q);
-        return;
-    }
-
-    for (uint32_t i03 = 0; i03 < ne03; i03++) {
-        for (uint32_t i02 = 0; i02 < ne02; i02++) {
-            uint8_t* dst_ptr  = (uint8_t*) dst->data  + i02*nb2  + i03*nb3;
-            uint8_t* src0_ptr = (uint8_t*) src0->data + i02*nb02 + i03*nb03;
-            if (!dma_queue_push(q, dma_make_ptr(dst_ptr, src0_ptr), nb1, nb01, ne00 * elem_size, ne01)) {
-                dma_queue_flush(q);
-                dma_queue_push(q, dma_make_ptr(dst_ptr, src0_ptr), nb1, nb01, ne00 * elem_size, ne01);
-            }
-        }
-    }
-
-    dma_queue_flush(q);
-}
-
-int op_cpy(struct htp_ops_context * octx) {
-    cpy_preamble;
-
-    const uint32_t n_threads = MIN(nr, octx->n_threads);
-
-    struct htp_copy_context ct;
-    ct.octx = octx;
-
-    switch (src0->type) {
-    case HTP_TYPE_F32: ct.src0_type_size = 4; ct.src0_block_size = 1; ct.src0_blocks_per_row = ne00 / 1; break;
-    case HTP_TYPE_F16: ct.src0_type_size = 2; ct.src0_block_size = 1; ct.src0_blocks_per_row = ne00 / 1; break;
-    default:
-        return HTP_STATUS_NO_SUPPORT;
-    }
-
-    switch (dst->type) {
-    case HTP_TYPE_F32: ct.dst_type_size = 4; ct.dst_block_size = 1; ct.dst_blocks_per_row = ne0 / 1; break;
-    case HTP_TYPE_F16: ct.dst_type_size = 2; ct.dst_block_size = 1; ct.dst_blocks_per_row = ne0 / 1; break;
-    default:
-        return HTP_STATUS_NO_SUPPORT;
-    }
-
-    if (octx->flags & HTP_OPFLAGS_SKIP_COMPUTE) {
-        return HTP_STATUS_OK;
-    }
-
-    const bool sametype   = (src0->type == dst->type);
-    const bool transposed = (nb00 > nb01) || (nb0 > nb1);
-    const bool sameshape  = !transposed && (ne00 == ne0 && ne01 == ne1 && ne02 == ne2 && ne03 == ne3);
-
-    ct.src0_nrows_per_thread = (nr + n_threads - 1) / n_threads;
-
-    worker_callback_t copy_fun = NULL;
-    bool use_dma = false;
-
-    if (sametype && sameshape) {
-        use_dma = true;
-    } else if (sameshape) {
-        /**/ if (dst->type == HTP_TYPE_F16 && src0->type == HTP_TYPE_F32)
-            copy_fun = cpy_thread_f16_f32_sameshape;
-        else if (dst->type == HTP_TYPE_F32 && src0->type == HTP_TYPE_F16)
-            copy_fun = cpy_thread_f32_f16_sameshape;
-        else
-            return HTP_STATUS_NO_SUPPORT;
-    } else if (sametype) {
-        if (src0->type == HTP_TYPE_F32) {
-            copy_fun = cpy_thread_f32_reshape;
-        } else {
-            copy_fun = cpy_thread_f16_reshape;
-        }
-=======
 static int cpy_scalar(struct htp_ops_context * octx, const struct htp_copy_kernel_params * kparams) {
     if (octx->ctx->mdev.count > 1 && octx->ctx->mdev.idx > 0) {
         return HTP_STATUS_OK;
@@ -536,17 +277,10 @@ static int cpy_scalar(struct htp_ops_context * octx, const struct htp_copy_kerne
         v_dst = hvx_vec_f32_to_f16(v_src, v_src);
     } else if (src0->type == HTP_TYPE_F16 && dst->type == HTP_TYPE_F32) {
         v_dst = Q6_V_lo_W(hvx_vec_f16_to_f32(v_src));
->>>>>>> ggml-org/master
     } else {
         return HTP_STATUS_NO_SUPPORT;
     }
 
-<<<<<<< HEAD
-    if (use_dma) {
-        cpy_dma_sametype_sameshape(octx, dst, src0, ct.src0_type_size, ne00, ne01, ne02, ne03, nb01, nb02, nb03, nb1, nb2, nb3);
-    } else {
-        worker_pool_run_func(octx->ctx->worker_pool, copy_fun, &ct, n_threads);
-=======
     hvx_vmem(d_ptr) = v_dst;
 
     dma_queue_push(dma_q, dma_make_data(dst->data, d_vtcm), d_size, d_size, d_size, 1);
@@ -748,25 +482,7 @@ int op_cpy(struct htp_ops_context * octx) {
 
             FARF(HIGH, "ggml-hex: sync-release : fence %p seq 0x%x status %d\n", sync_fence, seq, octx->status);
         }
->>>>>>> ggml-org/master
     }
 
-    const struct htp_tensor *sync = octx->src[1];
-    if (sync && (sync->flags & HTP_TENSOR_FENCE)) {
-        if (!use_dma) {
-            // htp_tensor_flush_all(octx->ctx, octx->dsts, 1);
-            qurt_mem_cache_clean((qurt_addr_t) 0, 0, QURT_MEM_CACHE_FLUSH_INVALIDATE_ALL, QURT_MEM_DCACHE);
-        }
-
-        atomic_uint * sync_fence = (atomic_uint *) sync->data;
-        const uint32_t seq = (uint32_t) octx->op_params[0];
-
-        atomic_store(&sync_fence[0], seq);
-        asm volatile ("syncht" : : : "memory");
-        Q6_dccleaninva_A((void *) sync_fence);
-
-        FARF(HIGH, "ggml-hex: sync-release : fence %p seq %u\n", sync_fence, seq);
-    }
-
-    return HTP_STATUS_OK;
+    return octx->status;
 }

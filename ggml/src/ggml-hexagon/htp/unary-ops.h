@@ -40,6 +40,7 @@ _Static_assert(sizeof(struct htp_unary_kernel_params) <= 128, "htp_unary_kernel_
 static inline bool htp_op_is_unary(uint32_t opcode) {
     switch (opcode) {
         case HTP_OP_CLAMP:
+        case HTP_OP_LEAKY_RELU:
         case HTP_OP_NORM:
         case HTP_OP_RMS_NORM:
         case HTP_OP_RMS_NORM_MUL:
@@ -57,13 +58,10 @@ static inline bool htp_op_is_unary(uint32_t opcode) {
         case HTP_OP_UNARY_TANH:
         case HTP_OP_UNARY_ABS:
         case HTP_OP_UNARY_LOG:
-<<<<<<< HEAD
-=======
         case HTP_OP_UNARY_RELU:
         case HTP_OP_UNARY_STEP:
         case HTP_OP_UNARY_CEIL:
         case HTP_OP_UNARY_SGN:
->>>>>>> ggml-org/master
         case HTP_OP_L2_NORM:
         case HTP_OP_TRI:
         case HTP_OP_HADAMARD:
@@ -150,22 +148,10 @@ static inline void htp_unary_solve_layout(
     bool broadcast_weight,
     uint32_t n_threads,
     size_t vtcm_size,
+    size_t elem_size,
     uint32_t * out_col_tile,
     uint32_t * out_vtcm_row_per_thread
 ) {
-<<<<<<< HEAD
-    const size_t src0_data_row_size = ne00 * sizeof(float);
-    const size_t dst_data_row_size  = ne10 * sizeof(float);
-
-    const size_t src0_row_size_aligned = hex_round_up(src0_data_row_size, 128);
-    const size_t dst_row_size_aligned  = hex_round_up(dst_data_row_size,  128);
-
-    size_t src1_row_size_aligned = 0;
-    if (op == HTP_OP_RMS_NORM_MUL) {
-        const size_t src1_data_row_size = ne11 * sizeof(float);
-        src1_row_size_aligned = hex_round_up(src1_data_row_size, 128);
-    }
-=======
     const size_t dst_elem_size      = (op == HTP_OP_HADAMARD) ? sizeof(float) : elem_size;
     const size_t src0_data_row_size = ne00 * elem_size;
     const size_t dst_data_row_size  = ne10 * dst_elem_size;
@@ -174,7 +160,6 @@ static inline void htp_unary_solve_layout(
     const size_t src0_row_size_aligned = hex_round_up(src0_data_row_size, 128);
     const size_t dst_row_size_aligned  = hex_round_up(dst_data_row_size,  128);
     const size_t src1_row_size_aligned = (op == HTP_OP_RMS_NORM_MUL) ? hex_round_up(src1_data_row_size, 128) : 0;
->>>>>>> ggml-org/master
 
     size_t vtcm_size_per_row = 0;
     size_t vtcm_row_per_thread = 0;
@@ -204,9 +189,6 @@ static inline void htp_unary_solve_layout(
     }
 
     const bool is_reduction = (op == HTP_OP_NORM || op == HTP_OP_RMS_NORM ||
-<<<<<<< HEAD
-                               op == HTP_OP_RMS_NORM_MUL || op == HTP_OP_L2_NORM);
-=======
                                op == HTP_OP_RMS_NORM_MUL || op == HTP_OP_L2_NORM ||
                                op == HTP_OP_HADAMARD);
     // The tiled fallback path below only has F32 task functions (unary_task_f32_tiled_*);
@@ -216,33 +198,12 @@ static inline void htp_unary_solve_layout(
     // (logged via FARF(ERROR, ...)) since there is no F16 tiled fallback. This is a known
     // limitation; supporting it would require adding F16 tiled kernels.
     const bool is_f16 = (elem_size == sizeof(_Float16));
->>>>>>> ggml-org/master
     uint32_t col_tile = 0;
 
-    if (vtcm_row_per_thread == 0 && !is_reduction) {
+    if (vtcm_row_per_thread == 0 && !is_reduction && !is_f16) {
         const size_t per_thread_budget = vtcm_size / n_threads;
         const size_t col_tile_bytes = hex_align_down(per_thread_budget / 4, 128);
-<<<<<<< HEAD
-        col_tile = (uint32_t) (col_tile_bytes / sizeof(float));
-
-        L->src0_bytes = col_tile_bytes * 2;
-        L->dst_bytes  = col_tile_bytes * 2;
-        L->src1_bytes = 0;
-    } else {
-        L->src0_bytes = src0_row_size_aligned * vtcm_row_per_thread * 2;
-        L->dst_bytes  = dst_row_size_aligned * vtcm_row_per_thread * 2;
-        if (op == HTP_OP_RMS_NORM_MUL) {
-            if (broadcast_weight) {
-                L->src1_bytes = src1_row_size_aligned;
-            } else {
-                L->src1_bytes = src1_row_size_aligned * vtcm_row_per_thread * 2;
-            }
-        } else {
-            L->src1_bytes = 0;
-        }
-=======
         col_tile = (uint32_t) (col_tile_bytes / elem_size);
->>>>>>> ggml-org/master
     }
 
     const uint32_t block = col_tile ? 0 : (uint32_t) vtcm_row_per_thread;

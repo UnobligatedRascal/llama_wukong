@@ -46,6 +46,8 @@ set(LLAMA_CORE_SOURCES
 )
 
 
+configure_file(llama-version.h.in ${CMAKE_CURRENT_BINARY_DIR}/llama-version.h @ONLY)
+
 add_library(llama
             ../include/llama.h
             llama.cpp
@@ -68,6 +70,7 @@ add_library(llama
             llama-kv-cache-msa.cpp
             llama-kv-cache-dsv4.cpp
             llama-memory.cpp
+            llama-moe-cache.cpp
             llama-memory-hybrid.cpp
             llama-memory-hybrid-iswa.cpp
             llama-memory-hybrid-idx.cpp
@@ -96,7 +99,7 @@ target_compile_definitions(llama PRIVATE
     LLAMA_COMMIT="${LLAMA_BUILD_COMMIT}"
 )
 
-target_include_directories(llama PRIVATE .)
+target_include_directories(llama PRIVATE . ${CMAKE_CURRENT_BINARY_DIR})
 target_include_directories(llama PUBLIC ../include)
 target_compile_features   (llama PRIVATE cxx_std_17) # don't bump
 

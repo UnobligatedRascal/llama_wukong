@@ -1,7 +1,3 @@
-<<<<<<< HEAD
-import { parseToolArgs } from '$lib/components/app/chat/ChatMessages/ChatMessage/ChatMessageToolCall/parsers/_shared';
-import { parseEditFileMeta } from '$lib/components/app/chat/ChatMessages/ChatMessage/ChatMessageToolCall/parsers/edit-file';
-=======
 import {
 	extractToolArgPath,
 	parseToolArgs
@@ -10,7 +6,6 @@ import {
 	parseEditFileMeta,
 	parseEditFileTitleMeta
 } from '$lib/components/app/chat/ChatMessages/ChatMessage/ChatMessageToolCall/parsers/edit-file';
->>>>>>> ggml-org/master
 import { parseExecShellCommandMeta } from '$lib/components/app/chat/ChatMessages/ChatMessage/ChatMessageToolCall/parsers/exec-shell-command';
 import { parseFileGlobSearchMeta } from '$lib/components/app/chat/ChatMessages/ChatMessage/ChatMessageToolCall/parsers/file-glob-search';
 import { parseGrepSearchMeta } from '$lib/components/app/chat/ChatMessages/ChatMessage/ChatMessageToolCall/parsers/grep-search';
@@ -18,11 +13,11 @@ import { parseReadFileMeta } from '$lib/components/app/chat/ChatMessages/ChatMes
 import { parseRunJavascriptMeta } from '$lib/components/app/chat/ChatMessages/ChatMessage/ChatMessageToolCall/parsers/run-javascript';
 import {
 	parseWriteFileMeta,
-	type WriteFileMeta
+	parseWriteFileTitleMeta
 } from '$lib/components/app/chat/ChatMessages/ChatMessage/ChatMessageToolCall/parsers/write-file';
 import { CODE_BLOCK } from '$lib/constants';
 import { AgenticSectionType, BuiltInTool } from '$lib/enums';
-import type { AgenticSection } from '$lib/types';
+import type { AgenticSection, WriteFileMeta } from '$lib/types';
 import { abbreviateHome, formatCwdMessage, lastPathSegment, parseCwdMessage } from '$lib/utils';
 import { describe, expect, it } from 'vitest';
 
@@ -262,8 +257,6 @@ describe('parseWriteFileMeta', () => {
 	});
 });
 
-<<<<<<< HEAD
-=======
 describe('parseWriteFileTitleMeta', () => {
 	it('matches the full meta for path, language and result fields', () => {
 		const args = JSON.stringify({ content: 'x'.repeat(50_000), path: '/foo.ts' });
@@ -382,7 +375,6 @@ describe('parseEditFileTitleMeta', () => {
 	});
 });
 
->>>>>>> ggml-org/master
 describe('parseEditFileMeta', () => {
 	it('parses edits array and applies editsApplied from the result', () => {
 		const section = makeSection(

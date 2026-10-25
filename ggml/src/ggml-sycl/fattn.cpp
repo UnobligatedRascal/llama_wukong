@@ -146,18 +146,6 @@ static best_fattn_kernel ggml_sycl_get_best_fattn_kernel(const int device, const
     // Set GGML_SYCL_ENABLE_MKL_FA=0 to force TILE/VEC path for A/B testing.
     // Example: GGML_SYCL_ENABLE_MKL_FA=0 llama-cli -m model.gguf -fa -ngl 99 ...
     // Note: MKL GEMM calls are incompatible with SYCL graph capture replay.
-<<<<<<< HEAD
-    static int mkl_enable = ggml_sycl_get_env("GGML_SYCL_ENABLE_MKL_FA", 1);
-    // MKL is validated for the mainstream GQA envelope: grouped-query
-    // (gqa_ratio >= 2), head_dim a multiple of 64 in [64,512] with matching
-    // K/V head size, mask, no sinks/ALiBi/softcap. Gemma's global layers use
-    // head_dim 512, so the cap must include it. Head sizes not a multiple of
-    // 64 (72/80/96), MHA (gqa_ratio == 1), and MLA (DKQ != DV, e.g. 576/512)
-    // fall through to TILE/VEC; see follow-up work.
-    if (mkl_enable == 1 && mask && !sinks && gqa_ratio >= 2 &&
-        Q->ne[0] >= 64 && Q->ne[0] <= 512 && Q->ne[0] % 64 == 0 &&
-        Q->ne[0] == V->ne[0] &&
-=======
     const bool standard_shape = Q->ne[0] >= 64 && Q->ne[0] <= 512 &&
         Q->ne[0] % 64 == 0 && Q->ne[0] == V->ne[0];
     // GLM-4.7 Flash's MLA shape is already expressible by the MKL pipeline:
@@ -169,7 +157,6 @@ static best_fattn_kernel ggml_sycl_get_best_fattn_kernel(const int device, const
 
     if (g_ggml_sycl_enable_mkl_fa == 1 && mask && !sinks && gqa_ratio >= 2 &&
         (standard_shape || glm_mla_shape) &&
->>>>>>> ggml-org/master
         Q->ne[1] >= 32 && K->ne[1] >= 1024 &&
         max_bias == 0.0f && logit_softcap == 0.0f &&
         (Q->ne[3] == K->ne[3] || K->ne[3] == 1)) {

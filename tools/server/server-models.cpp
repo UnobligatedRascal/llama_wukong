@@ -40,32 +40,48 @@ extern char **environ;
 #define CMD_ROUTER_TO_CHILD_EXIT  "cmd_router_to_child:exit"
 #define CMD_CHILD_TO_ROUTER_STATE "cmd_child_to_router:state:" // followed by json string
 
+// note: SIGPIPE is ignored by the server
+static void request_child_exit(server_subproc & proc) {
+    FILE * stdin_file = proc.sproc.stdin_file();
+    if (stdin_file) {
+        fprintf(stdin_file, "%s\n", CMD_ROUTER_TO_CHILD_EXIT);
+        fflush(stdin_file);
+    }
+}
+
 // address for child process, this is needed because router may run on 0.0.0.0
 // ref: https://github.com/ggml-org/llama.cpp/issues/17862
 #define CHILD_ADDR "127.0.0.1"
 
-struct server_subproc {
-    common_subproc sproc; // not yet spawned while in DOWNLOADING state
-    std::atomic<bool> stopped{false}; // set to cancel a download or signal child process exit
-
-    bool is_alive() {
-        return sproc.alive();
+// single-threaded, watching all child processes at once
+struct server_monitor {
+    server_monitor(server_models & models) : models(models) {
+        th = std::thread([this]() { run(); });
     }
 
-    void request_exit() {
-        FILE * stdin_file = sproc.stdin_file();
-        if (stdin_file) {
-            fprintf(stdin_file, "%s\n", CMD_ROUTER_TO_CHILD_EXIT);
-            fflush(stdin_file);
+    ~server_monitor() {
+        push({ cmd_t::QUIT, {}, "", 0, false });
+        th.join();
+    }
+
+    // thread-safe
+    void watch(const std::string & name, std::shared_ptr<server_subproc> proc, server_child_mode mode, int port) {
+        child_t c;
+        c.name = name;
+        c.proc = std::move(proc);
+        c.mode = mode;
+        c.port = port;
+        if (!c.proc->has_output()) {
+            SRV_ERR("failed to get stdout/stderr of child process for name=%s\n", name.c_str());
+            c.eof = true;
         }
-        stopped.store(true, std::memory_order_relaxed);
+        push({ cmd_t::WATCH, std::move(c), "", 0, false });
     }
 
-    void terminate() {
-        sproc.terminate();
+    // thread-safe
+    void stop(const std::string & name, int stop_timeout, bool send_exit) {
+        push({ cmd_t::STOP, {}, name, stop_timeout, send_exit });
     }
-<<<<<<< HEAD
-=======
 
 private:
     struct child_t {
@@ -243,7 +259,6 @@ private:
     std::vector<child_t> children; // monitor thread only
     server_subproc::waiter waiter;
     std::thread th;
->>>>>>> ggml-org/master
 };
 
 struct server_lru_sched {
@@ -256,16 +271,17 @@ struct server_lru_sched {
     }
 
     // returns "" if no model can be given up
-    std::string pick_victim(std::unique_lock<std::mutex> & lk, const std::string & exclude) {
+    std::string pick_victim(std::unique_lock<std::mutex> & lk) {
         check_lock(lk);
         std::string victim;
         int64_t victim_last_used = 0;
         for (const auto & m : models.mapping) {
-            if (m.first == exclude) {
-                continue;
-            }
             // a busy model is mid-request, one still coming up has no request to finish
             if (m.second.req_count != 0 || !m.second.meta.is_ready_or_sleep()) {
+                continue;
+            }
+            // already on its way out, or a queued request wants it
+            if (models.stopping_models.count(m.first) || find(m.first)) {
                 continue;
             }
             if (victim.empty() || m.second.meta.last_used < victim_last_used) {
@@ -285,13 +301,8 @@ struct server_lru_sched {
             SRV_INF("request for name=%s joined the queue, %d waiting\n", model_id.c_str(), e->n_waiters);
             return;
         }
-<<<<<<< HEAD
-        queue.push_back({ model_id, 1, false, false });
-        SRV_INF("models_max reached, request for name=%s queued at position %zu\n",
-=======
         queue.push_back({ model_id, 1, false });
         SRV_INF("request for name=%s queued at position %zu\n",
->>>>>>> ggml-org/master
                 model_id.c_str(), queue.size());
     }
 
@@ -325,85 +336,67 @@ struct server_lru_sched {
         return true;
     }
 
-    // ok means the model is up: drop the entry, the other waiters just watch its status now
+    // on failure the entry is back in line; on success it stays until its waiters leave,
+    // so the model coming up is never picked as a victim before they use it
     void claim_done(std::unique_lock<std::mutex> & lk, const std::string & model_id, bool ok) {
         check_lock(lk);
+        if (ok) {
+            return;
+        }
         for (auto it = queue.begin(); it != queue.end(); ++it) {
             if (it->model_id == model_id) {
-                if (ok) {
-                    queue.erase(it);
-                } else {
-                    it->loading = false;
-                }
+                it->loading = false;
                 return;
             }
         }
     }
 
-    // a model is on its way out for this entry, so other requests do not also give up one
-    void mark_slot_pending(std::unique_lock<std::mutex> & lk, const std::string & model_id) {
+    // evict idle models while queued requests outnumber the slots that are free or being freed
+    // caller must hold models.mutex; never blocks, so it is safe from any thread
+    void tick(std::unique_lock<std::mutex> & lk) {
         check_lock(lk);
-        if (entry_t * e = find(model_id)) {
-            e->slot_pending = true;
+        if (models.base_params.models_max <= 0 || queue.empty()) {
+            return;
         }
-    }
-
-    // model_id went idle: give up its slot if a queued request needs one
-    // thread-safe, caller must NOT hold models.mutex
-    void on_model_idle(const std::string & model_id) {
-        if (models.base_params.models_max <= 0) {
-            return; // no limit, nothing is ever queued
-        }
-        {
-            std::unique_lock<std::mutex> lk(models.mutex);
-            if (queue.empty()) {
-                return;
-            }
-            size_t promised     = 0;
-            bool   has_unserved = false;
-            for (const auto & e : queue) {
-                if (e.needs_slot()) {
-                    has_unserved = true;
-                } else {
-                    promised++;
-                }
-            }
-            if (!has_unserved) {
-                return;
-            }
-            if ((int) count_running() - (int) promised < models.base_params.models_max) {
-                return; // a slot is already on its way
-            }
-            // never give up a model that a queued request wants
-            for (const auto & e : queue) {
-                if (e.model_id == model_id) {
-                    return;
-                }
-            }
-            auto it = models.mapping.find(model_id);
-            if (it == models.mapping.end() || it->second.req_count != 0 || !it->second.meta.is_ready_or_sleep()) {
-                return;
-            }
-            for (auto & e : queue) {
-                if (!e.slot_pending) {
-                    e.slot_pending = true;
-                    break;
+        int n_running  = 0;
+        int n_stopping = 0;
+        for (const auto & m : models.mapping) {
+            if (m.second.meta.is_running()) {
+                n_running++;
+                if (models.stopping_models.count(m.first)) {
+                    n_stopping++;
                 }
             }
         }
-        SRV_INF("model name=%s went idle, giving up its slot to a queued request\n", model_id.c_str());
-        models.unload(model_id);
+        int n_needed  = 0;
+        int n_claimed = 0; // claimed the slot, but load() has not spawned yet
+        for (const auto & e : queue) {
+            if (!e.loading) {
+                n_needed++;
+                continue;
+            }
+            auto it = models.mapping.find(e.model_id);
+            if (it != models.mapping.end() && !it->second.meta.is_running()) {
+                n_claimed++;
+            }
+        }
+        int n_free = models.base_params.models_max - n_running + n_stopping - n_claimed;
+        while (n_free < n_needed) {
+            std::string victim = pick_victim(lk);
+            if (victim.empty()) {
+                return; // all remaining models are busy, wait for a request to end
+            }
+            SRV_INF("evicting idle LRU name=%s for a queued request\n", victim.c_str());
+            models.request_stop(victim);
+            n_free++;
+        }
     }
 
   private:
     struct entry_t {
         std::string model_id;
-        int  n_waiters;    // requests waiting for this model
-        bool slot_pending; // a model is already being evicted for this entry
-        bool loading;      // one of the waiters is doing the load right now
-
-        // a slot is already coming, or already taken by the load in flight
-        bool needs_slot() const { return !slot_pending && !loading; }
+        int  n_waiters; // requests waiting for this model
+        bool loading;   // one of the waiters is doing the load right now
     };
 
     entry_t * find(const std::string & model_id) {
@@ -569,14 +562,9 @@ server_models::server_models(
               base_params(params),
               base_env(get_environment()),
               base_preset(ctx_preset.load_from_args(argc, argv)),
-<<<<<<< HEAD
-              sched(std::make_unique<server_lru_sched>(*this)) {
-    // clean up base preset
-=======
               sched(std::make_unique<server_lru_sched>(*this)),
               monitor(std::make_unique<server_monitor>(*this)) {
     // propagate base params to child
->>>>>>> ggml-org/master
     unset_reserved_args(base_preset, true);
 
     // do not propagate these options, but allow preset to explicitly set them
@@ -596,6 +584,10 @@ server_models::server_models(
 }
 
 server_models::~server_models() = default;
+
+void server_models::instance_t::request_exit() const {
+    request_child_exit(*subproc);
+}
 
 void server_models::add_model(server_model_meta && meta) {
     if (mapping.find(meta.name) != mapping.end()) {
@@ -651,7 +643,6 @@ void server_models::add_model(server_model_meta && meta) {
     std::string name = meta.name;
     mapping[name] = instance_t{
         /* subproc */ std::make_shared<server_subproc>(),
-        /* th      */ std::thread(),
         /* meta    */ std::move(meta)
     };
 }
@@ -1042,9 +1033,7 @@ void server_models::load_models() {
     };
 
     // Phase 2: acquire the lock once for all mapping mutations.
-    // We temporarily release it only when calling functions that acquire it internally
-    // (unload, load) or when joining threads (the monitoring thread calls update_status
-    // which locks the mutex, so joining while holding it would deadlock).
+    // We temporarily release it only when calling functions that acquire it internally (unload)
     std::unique_lock<std::mutex> lk(mutex);
 
     need_reload = false;
@@ -1128,49 +1117,15 @@ void server_models::load_models() {
             return true;
         });
 
-        // collect all threads to join in one pass while the lock is held:
-        // - monitoring threads from just-unloaded models (to_unload)
-        // - threads of finished downloads (DOWNLOADED), they acquire the mutex on exit
-        // - threads of already-UNLOADED models that are being removed from source
-        std::vector<std::thread> threads_to_join;
-        for (const auto & name : to_unload) {
-            auto it = mapping.find(name);
-            if (it != mapping.end() && it->second.th.joinable()) {
-                threads_to_join.push_back(std::move(it->second.th));
-            }
-        }
-        for (auto & [name, inst] : mapping) {
-            if (inst.meta.status == SERVER_MODEL_STATUS_DOWNLOADING) {
-                continue; // downloading models are not from config sources, leave them alone
-            }
-            if (inst.meta.status == SERVER_MODEL_STATUS_DOWNLOADED) {
-                // joining this thread under the lock deadlocks: it locks the mutex on its way out
-                if (inst.th.joinable()) {
-                    threads_to_join.push_back(std::move(inst.th));
-                }
-                continue;
-            }
-            if (final_presets.find(name) == final_presets.end() && !inst.meta.is_running() && inst.th.joinable()) {
-                threads_to_join.push_back(std::move(inst.th));
-            }
-        }
-
-        // join outside the lock - monitoring thread calls update_status (needs lock)
-        lk.unlock();
-        for (auto & th : threads_to_join) th.join();
-        lk.lock();
-
         // erase models no longer in any source
         for (auto it = mapping.begin(); it != mapping.end(); ) {
             if (it->second.meta.status == SERVER_MODEL_STATUS_DOWNLOADING) {
                 ++it; // download thread is still busy, skip
             } else if (it->second.meta.status == SERVER_MODEL_STATUS_DOWNLOADED) {
-                // download finished, thread is joined above, safe to erase
-                GGML_ASSERT(!it->second.th.joinable());
+                // download finished, safe to erase
                 it = mapping.erase(it);
             } else if (final_presets.find(it->first) == final_presets.end()) {
                 SRV_INF("(reload) removing model name=%s (no longer in source)\n", it->first.c_str());
-                GGML_ASSERT(!it->second.th.joinable()); // must have been joined above
                 it = mapping.erase(it);
             } else {
                 ++it;
@@ -1348,7 +1303,7 @@ void server_models::unload_lru() {
         if (sched->has_capacity(lk)) {
             return;
         }
-        lru_model_name = sched->pick_victim(lk, "");
+        lru_model_name = sched->pick_victim(lk);
     }
     if (!lru_model_name.empty()) {
         SRV_INF("models_max limit reached, removing LRU name=%s\n", lru_model_name.c_str());
@@ -1433,7 +1388,8 @@ void server_models::load(const std::string & name, const load_options & opts) {
     // exceeding models_max. Without this, the window between unload_lru()
     // releasing its lock and this lock_guard acquiring allows multiple
     // threads to each observe capacity and all proceed to load.
-    if (base_params.models_max > 0) {
+    // Download workers do not use models_max slots.
+    if (opts.mode == SERVER_CHILD_MODE_NORMAL && base_params.models_max > 0) {
         size_t count_active = 0;
         for (const auto & m : mapping) {
             if (m.second.meta.is_running()) {
@@ -1503,126 +1459,17 @@ void server_models::load(const std::string & name, const load_options & opts) {
         }
     }
 
-<<<<<<< HEAD
-    // start a thread to manage the child process
-    // captured variables are guaranteed to be destroyed only after the thread is joined
-    inst.th = std::thread([
-        this, name,
-        child_proc = inst.subproc,
-        port = inst.meta.port,
-        stop_timeout = inst.meta.stop_timeout,
-        child_mode = opts.mode
-    ]() {
-        FILE * stdin_file = child_proc->sproc.stdin_file();
-        FILE * stdout_file = child_proc->sproc.stdout_file(); // combined stdout/stderr
-
-        std::thread log_thread([&]() {
-            // read stdout/stderr and forward to main server log
-            // also handle status report from child process
-            std::vector<char> vec_buf(128 * 1024); // large buffer for storing info
-            char * buffer = vec_buf.data();
-            if (stdout_file) {
-                while (fgets(buffer, vec_buf.size(), stdout_file) != nullptr) {
-                    std::string str(buffer);
-                    if (string_starts_with(buffer, CMD_CHILD_TO_ROUTER_STATE)) {
-                        LOG_DBG("[%5d] %s", port, buffer); // prevent spamming the log
-                        this->handle_child_state(name, str);
-                    } else {
-                        // forward log
-                        LOG("[%5d] %s", port, buffer);
-                    }
-                }
-            } else {
-                SRV_ERR("failed to get stdout/stderr of child process for name=%s\n", name.c_str());
-            }
-        });
-
-        std::thread stopping_thread([&]() {
-            // thread to monitor explicit stop requests; child crash is signalled via child_proc->stopped
-            auto is_stopping = [this, &name]() {
-                return this->stopping_models.find(name) != this->stopping_models.end();
-            };
-            {
-                std::unique_lock<std::mutex> lk(this->mutex);
-                this->cv_stop.wait(lk, [&]() {
-                    return is_stopping() || child_proc->stopped.load(std::memory_order_acquire);
-                });
-            }
-            // child crashed or finished on its own, skip graceful shutdown sequence
-            if (child_proc->stopped.load(std::memory_order_acquire)) {
-                return;
-            }
-            SRV_INF("stopping model instance name=%s\n", name.c_str());
-            fprintf(stdin_file, "%s\n", CMD_ROUTER_TO_CHILD_EXIT);
-            fflush(stdin_file);
-            int64_t start_time = ggml_time_ms();
-            while (true) {
-                std::unique_lock<std::mutex> lk(this->mutex);
-                if (!is_stopping() || child_proc->stopped.load(std::memory_order_acquire)) {
-                    return;
-                }
-                int64_t elapsed = ggml_time_ms() - start_time;
-                if (elapsed >= stop_timeout * 1000) {
-                    lk.unlock();
-                    SRV_WRN("force-killing model instance name=%s after %d seconds timeout\n", name.c_str(), stop_timeout);
-                    child_proc->terminate();
-                    return;
-                }
-                this->cv_stop.wait_for(lk, std::chrono::seconds(1), [&]() {
-                    return !is_stopping() || child_proc->stopped.load(std::memory_order_acquire);
-                });
-            }
-        });
-
-        // we reach here when the child process exits (stdout EOF)
-        // note: we cannot join() prior to this point because it will close stdin_file
-        if (log_thread.joinable()) {
-            log_thread.join();
-        }
-
-        child_proc->stopped.store(true, std::memory_order_release);
-        {
-            std::lock_guard<std::mutex> lk(this->mutex);
-            stopping_models.erase(name);
-            cv_stop.notify_all();
-        }
-        if (stopping_thread.joinable()) {
-            stopping_thread.join();
-        }
-
-        // get the exit code
-        int exit_code = child_proc->sproc.join();
-
-        // update status and exit code
-        if (child_mode == SERVER_CHILD_MODE_DOWNLOAD) {
-            // instance will be cleaned up on next load_models() call
-        } else {
-            this->update_status(name, {
-                SERVER_MODEL_STATUS_UNLOADED,
-                exit_code
-            });
-        }
-        SRV_INF("instance name=%s exited with status %d\n", name.c_str(), exit_code);
-    });
-
-    // clean up old process/thread if exists
-=======
     // remember the download: the partial files carry a content hash, not the name
     if (opts.mode == SERVER_CHILD_MODE_DOWNLOAD) {
         unfinished_downloads.add({ name, opts.sidecars, opts.partials });
     }
 
     // old process should have exited already, but just in case, we clean it up here
->>>>>>> ggml-org/master
     {
-        auto & old_instance = mapping[name];
-        // old process should have exited already, but just in case, we clean it up here
-        if (old_instance.subproc && old_instance.subproc->is_alive()) {
+        auto it = mapping.find(name);
+        if (it != mapping.end() && it->second.subproc && it->second.subproc->is_alive()) {
             SRV_WRN("old process for model name=%s is still alive, this is unexpected\n", name.c_str());
-            old_instance.subproc->terminate(); // force kill
-        }
-        if (old_instance.th.joinable()) {
-            old_instance.th.join();
+            it->second.subproc->terminate(); // force kill
         }
     }
 
@@ -1630,12 +1477,13 @@ void server_models::load(const std::string & name, const load_options & opts) {
         {"status", server_model_status_to_string(inst.meta.status)},
     });
 
+    auto proc = inst.subproc;
+    int  port = inst.meta.port;
     mapping[name] = std::move(inst);
+    monitor->watch(name, proc, opts.mode, port);
     cv.notify_all();
 }
 
-<<<<<<< HEAD
-=======
 void server_models::request_stop(const std::string & name, bool send_exit) {
     auto it = mapping.find(name);
     if (it == mapping.end() || stopping_models.count(name)) {
@@ -1667,28 +1515,27 @@ void server_models::on_child_exit(const std::string & name, const std::shared_pt
     }
 }
 
->>>>>>> ggml-org/master
 void server_models::unload(const std::string & name) {
     std::unique_lock<std::mutex> lk(mutex);
     auto it = mapping.find(name);
     if (it != mapping.end()) {
         if (it->second.meta.status == SERVER_MODEL_STATUS_DOWNLOADING) {
             SRV_INF("cancelling download for model name=%s\n", name.c_str());
-            it->second.subproc->request_exit();
+            it->second.request_exit();
             // for convenience, we wait the status change here
             wait(lk, name, [](const server_model_meta & new_meta) {
                 return new_meta.status != SERVER_MODEL_STATUS_DOWNLOADING;
             });
         } else if (it->second.meta.is_running()) {
             SRV_INF("stopping model instance name=%s\n", name.c_str());
-            stopping_models.insert(name);
-            if (it->second.meta.status == SERVER_MODEL_STATUS_LOADING) {
+            bool loading = it->second.meta.status == SERVER_MODEL_STATUS_LOADING;
+            if (loading) {
                 // special case: if model is in loading state, unloading means force-killing it
                 SRV_WRN("model name=%s is still loading, force-killing\n", name.c_str());
                 it->second.subproc->terminate();
             }
-            cv_stop.notify_all();
-            // status change will be handled by the managing thread
+            request_stop(name, !loading);
+            // status change will be handled by the monitor
         } else {
             SRV_WRN("model instance name=%s is not running\n", name.c_str());
         }
@@ -1696,28 +1543,29 @@ void server_models::unload(const std::string & name) {
 }
 
 void server_models::unload_all() {
-    std::vector<std::thread> to_join;
-    {
-        std::lock_guard<std::mutex> lk(mutex);
-        for (auto & [name, inst] : mapping) {
-            if (inst.meta.status == SERVER_MODEL_STATUS_DOWNLOADING) {
-                SRV_INF("cancelling download for model name=%s\n", name.c_str());
-                inst.subproc->stopped.store(true, std::memory_order_relaxed);
-            } else if (inst.meta.is_running()) {
-                SRV_INF("stopping model instance name=%s\n", name.c_str());
-                stopping_models.insert(name);
-                cv_stop.notify_all();
-                // status change will be handled by the managing thread
+    std::unique_lock<std::mutex> lk(mutex);
+    for (auto & [name, inst] : mapping) {
+        if (inst.meta.status == SERVER_MODEL_STATUS_DOWNLOADING) {
+            SRV_INF("cancelling download for model name=%s\n", name.c_str());
+            inst.request_exit();
+        } else if (inst.meta.is_running()) {
+            SRV_INF("stopping model instance name=%s\n", name.c_str());
+            bool loading = inst.meta.status == SERVER_MODEL_STATUS_LOADING;
+            if (loading) {
+                inst.subproc->terminate();
             }
-            // moving the thread to join list to avoid deadlock
-            to_join.push_back(std::move(inst.th));
+            request_stop(name, !loading);
         }
     }
-    for (auto & th : to_join) {
-        if (th.joinable()) {
-            th.join();
+    // wait for every child to exit, the monitor force-kills the ones that ignore the exit command
+    cv.wait(lk, [this]() {
+        for (const auto & [name, inst] : mapping) {
+            if (inst.meta.is_running() || inst.meta.status == SERVER_MODEL_STATUS_DOWNLOADING) {
+                return false;
+            }
         }
-    }
+        return true;
+    });
 }
 
 void server_models::update_status(const std::string & name, const update_status_args & args) {
@@ -1757,6 +1605,8 @@ void server_models::update_status(const std::string & name, const update_status_
         if (!args.progress.is_null()) {
             meta.progress = args.progress;
         }
+        // a model that comes up idle or goes down changes the slot count for queued requests
+        sched->tick(lk);
     }
     // broadcast status change to SSE
     {
@@ -1832,47 +1682,25 @@ bool server_models::remove(const std::string & name) {
     if (it->second.meta.status == SERVER_MODEL_STATUS_DOWNLOADING) {
         // cancel in-flight download
         SRV_INF("cancelling download for model name=%s\n", name.c_str());
-        it->second.subproc->request_exit();
+        it->second.request_exit();
     } else if (it->second.meta.is_running()) {
         // stop running instance
         SRV_INF("stopping model instance name=%s\n", name.c_str());
-        stopping_models.insert(name);
-        if (it->second.meta.status == SERVER_MODEL_STATUS_LOADING) {
+        bool loading = it->second.meta.status == SERVER_MODEL_STATUS_LOADING;
+        if (loading) {
             it->second.subproc->terminate();
         }
-        cv_stop.notify_all();
+        request_stop(name, !loading);
     }
 
-    // wait until the monitoring thread finishes
+    // wait until the child is gone
     wait(lk, name, [](const server_model_meta & meta) {
         return meta.status == SERVER_MODEL_STATUS_UNLOADED
             || meta.status == SERVER_MODEL_STATUS_DOWNLOADED;
     });
 
-<<<<<<< HEAD
-    // re-find after wait - load_models() may have erased the entry during the wait
-    it = mapping.find(name);
-    if (it == mapping.end()) {
-        // load_models() already joined the thread and erased the entry;
-        // we just need to clean up the cached files on disk
-        lk.unlock();
-        bool ok = common_download_remove(name);
-        SRV_INF("removing model name=%s from cache (%s)\n", name.c_str(), ok ? "succeeded" : "partial");
-        notify_sse("model_remove", name, {});
-        return true;
-    }
-
-    // join before erasing - thread no longer acquires this mutex
-    if (it->second.th.joinable()) {
-        it->second.th.join();
-    }
-
-    // remove from disk (best-effort: cancelled downloads may have no cached files)
-    bool ok = common_download_remove(name);
-=======
     // load_models() may have erased the entry during the wait; the files go under the
     // lock, so a download of the same tag cannot start meanwhile
->>>>>>> ggml-org/master
     mapping.erase(name);
     unfinished_downloads.remove(name);
 
@@ -1920,41 +1748,15 @@ bool server_models::ensure_model_ready(const std::string & name, const std::func
 
     bool queued   = false;
     bool did_load = false;
-    std::string victim;
     {
         std::unique_lock<std::mutex> lk(mutex);
         auto it = mapping.find(name);
         if (it != mapping.end() && it->second.meta.status == SERVER_MODEL_STATUS_UNLOADED) {
-<<<<<<< HEAD
-            bool has_capacity = sched->has_capacity(lk);
-            if (has_capacity && sched->queue_empty(lk)) {
-                lk.unlock();
-                SRV_INF("model name=%s is not loaded, loading...\n", name.c_str());
-                load(name);
-                did_load = true;
-            } else {
-                // also queue when a slot looks free but others wait already, else they starve
-                sched->join(lk, name);
-                queued = true;
-                if (!has_capacity) {
-                    // an idle model may sit here right now, do not wait for a request to end
-                    victim = sched->pick_victim(lk, name);
-                    if (!victim.empty()) {
-                        sched->mark_slot_pending(lk, name);
-                    }
-                }
-            }
-=======
             // the queue entry protects the model from eviction until its waiters leave
             sched->join(lk, name);
             sched->tick(lk);
             queued = true;
->>>>>>> ggml-org/master
         }
-    }
-    if (!victim.empty()) {
-        SRV_INF("evicting idle LRU name=%s to make room for name=%s\n", victim.c_str(), name.c_str());
-        unload(victim);
     }
 
     // while queued, this is also where the load happens: the head of the queue does it
@@ -2030,9 +1832,7 @@ bool server_models::ensure_model_ready(const std::string & name, const std::func
                 }
                 lk.lock();
                 sched->claim_done(lk, name, ok);
-                if (ok) {
-                    queued = false; // entry is gone, the other waiters watch the status now
-                }
+                sched->tick(lk);
                 continue;
             }
 
@@ -2040,6 +1840,7 @@ bool server_models::ensure_model_ready(const std::string & name, const std::func
         }
     } catch (...) {
         leave_queue();
+        sched->tick(lk); // a slot freed for this waiter goes to the next one
         throw;
     }
     leave_queue();
@@ -2089,17 +1890,13 @@ server_http_res_ptr server_models::proxy_request(const server_http_req & req, co
             );
 
     proxy->cleanup = [this, name]() {
-        bool went_idle = false;
-        {
-            std::unique_lock<std::mutex> lk(mutex);
-            auto it = mapping.find(name);
-            if (it != mapping.end() && it->second.req_count > 0) {
-                it->second.req_count--;
-                went_idle = it->second.req_count == 0;
+        std::unique_lock<std::mutex> lk(mutex);
+        auto it = mapping.find(name);
+        if (it != mapping.end() && it->second.req_count > 0) {
+            it->second.req_count--;
+            if (it->second.req_count == 0) {
+                sched->tick(lk);
             }
-        }
-        if (went_idle) {
-            sched->on_model_idle(name);
         }
     };
 
@@ -2203,7 +2000,7 @@ void server_models::handle_child_state(const std::string & name, const std::stri
                     std::lock_guard<std::mutex> lk(mutex);
                     auto it = mapping.find(name);
                     if (it != mapping.end()) {
-                        return it->second.subproc->request_exit();
+                        return it->second.request_exit();
                     }
                 };
                 if (result == "download_finished") {
@@ -2387,16 +2184,8 @@ void server_child::notify_to_router(const std::string & state, const json & payl
         {"payload", payload},
     };
     std::lock_guard<std::mutex> lk(mtx_stdout);
-<<<<<<< HEAD
-    common_log_pause(common_log_main());
-    fflush(stdout);
-    fprintf(stdout, "%s%s\n", CMD_CHILD_TO_ROUTER_STATE, safe_json_to_str(data).c_str());
-    fflush(stdout);
-    common_log_resume(common_log_main());
-=======
     fprintf(cmd_out, "%s%s\n", CMD_CHILD_TO_ROUTER_STATE, safe_json_to_str(data).c_str());
     fflush(cmd_out);
->>>>>>> ggml-org/master
 }
 
 

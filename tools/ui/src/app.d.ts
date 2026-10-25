@@ -131,7 +131,6 @@ declare global {
 
 declare global {
 	interface Window {
-		idxThemeStyle?: number;
 		idxCodeBlock?: number;
 
 		// File System Access API - not in the DOM lib and unavailable in some browsers

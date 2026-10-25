@@ -6,8 +6,6 @@
 #include "quants.hpp"
 #include "vecdotq.hpp"
 
-<<<<<<< HEAD
-=======
 #ifdef GGML_SYCL_MMVQ_HAS_XMX
 #    include "esimd.hpp"
 #endif // GGML_SYCL_MMVQ_HAS_XMX
@@ -63,7 +61,6 @@ static __dpct_inline__ float vec_dot_iq1_s_q8_1_moe(const void * __restrict__ vb
 // every row count, so it does not consult this threshold.
 static constexpr int Q4_K_MMVQ_ROW_PAIR_MIN_NROWS = 6272;
 
->>>>>>> ggml-org/master
 template <typename reorder_vec_dot_q_sycl>
 static void mul_mat_vec_q_reorder(const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
                                   const int ncols, const int nrows, const sycl::nd_item<3> & nd_item) {
@@ -117,12 +114,8 @@ static void mul_mat_vec_q_reorder(const void * __restrict__ vx, const void * __r
 
 // With has_fusion, `vgate` is a second weight matrix sharing vx's shape, stride and reorder
 // layout: one pass computes both row dot products and the epilogue writes glu(gate, up).
-<<<<<<< HEAD
-template <typename reorder_vec_dot_q_sycl, int ncols_dst, bool has_fusion = false>
-=======
 template <typename reorder_vec_dot_q_sycl, int ncols_dst, bool has_fusion = false, int rows_per_sg = 1,
           bool shared_weights = reorder_vec_dot_shared_weights<reorder_vec_dot_q_sycl::gtype>::value>
->>>>>>> ggml-org/master
 static void mul_mat_vec_q_reorder_ncols(const void * __restrict__ vx, const void * __restrict__ vgate,
                                         const void * __restrict__ vy, float * __restrict__ dst, const int ncols,
                                         const int nrows, const int stride_col_y_bytes, const int stride_col_dst,
@@ -134,13 +127,16 @@ static void mul_mat_vec_q_reorder_ncols(const void * __restrict__ vx, const void
     const int  sg_range     = sg.get_group_linear_range();
     const int  workgroup_id = nd_item.get_group_linear_id();
     const int  sg_id        = sg.get_group_linear_id();
-    const int  row          = workgroup_id * sg_range + sg_id;
+    const int  row0         = (workgroup_id * sg_range + sg_id) * rows_per_sg;
 
     // row is sub-group uniform, so this retires whole sub-groups and the collectives below
     // stay convergent
-    if (row >= nrows) {
+    if (row0 >= nrows) {
         return;
     }
+
+    static_assert(rows_per_sg == 1 ||
+                  reorder_vec_dot_shared_activations<reorder_vec_dot_q_sycl::gtype>::value);
 
     const int     blocks_per_row              = ncols / block_traits::qk;
     constexpr int blocks_per_subgroup         = ceil_div(block_traits::vdr_mmvq * WARP_SIZE, block_traits::qi);
@@ -150,33 +146,21 @@ static void mul_mat_vec_q_reorder_ncols(const void * __restrict__ vx, const void
     static_assert(blocks_per_subgroup > 0);
     static_assert(block_elements_per_subgroup > 0);
 
-    float partial_sum[ncols_dst] = { 0.0f };
+    float partial_sum[ncols_dst][rows_per_sg] = {};
     // sized 1 rather than 0 when unused: zero-length arrays are not standard C++, and the
     // array is dead and eliminated in that case
-    [[maybe_unused]] float partial_gate[has_fusion ? ncols_dst : 1] = { 0.0f };
+    [[maybe_unused]] float partial_gate[has_fusion ? ncols_dst : 1][has_fusion ? rows_per_sg : 1] = {};
     for (int i = sg.get_local_linear_id() / block_elements_per_subgroup; i < blocks_per_row; i += blocks_per_subgroup) {
-        const int ibx = row * blocks_per_row + i;
-
-        // the offsets depend only on the block index and the matrix shape, never on the base
-        // pointer, which is what lets vgate reuse them
-        const auto bx_offset = block_type::get_block_offset(ibx, nblocks);
-        const auto d_offset  = block_type::get_d_offset(nrows, ncols, ibx);
         const int  iby       = i * block_type::block_to_q8_1_ratio();
 
 #pragma unroll
         for (int elem = 0; elem < block_elements_per_subgroup; elem += WARP_SIZE) {
             const int iqs = elem + block_traits::vdr_mmvq * (sg.get_local_linear_id() % block_elements_per_subgroup);
 
+            if constexpr (rows_per_sg > 1) {
+                typename reorder_vec_dot_q_sycl::weights wx[rows_per_sg];
+                [[maybe_unused]] typename reorder_vec_dot_q_sycl::weights wg[rows_per_sg];
 #pragma unroll
-<<<<<<< HEAD
-            for (int j = 0; j < ncols_dst; ++j) {
-                const char        * vy_j           = (const char *) vy + j * stride_col_y_bytes;
-                const int8_t      * q8_1_quant_ptr = (const int8_t *) vy_j + iby * QK8_1;
-                const sycl::half2 * q8_1_ds_ptr    = (const sycl::half2 *) (vy_j + ncols + iby * sizeof(sycl::half2));
-
-                partial_sum[j] += reorder_vec_dot_q_sycl()(vx, bx_offset, d_offset, q8_1_quant_ptr, q8_1_ds_ptr, iqs);
-
-=======
                 for (int r = 0; r < rows_per_sg; ++r) {
                     const int row = sycl::min(row0 + r, nrows - 1);
                     const int ibx = row * blocks_per_row + i;
@@ -207,10 +191,51 @@ static void mul_mat_vec_q_reorder_ncols(const void * __restrict__ vx, const void
                 const auto bx_offset = block_type::get_block_offset(ibx, nblocks);
                 const auto d_offset  = block_type::get_d_offset(nrows, ncols, ibx);
                 const auto wx = reorder_vec_dot_q_sycl::load(vx, bx_offset, d_offset, iqs);
->>>>>>> ggml-org/master
                 if constexpr (has_fusion) {
-                    partial_gate[j] +=
-                        reorder_vec_dot_q_sycl()(vgate, bx_offset, d_offset, q8_1_quant_ptr, q8_1_ds_ptr, iqs);
+                    const auto wg = reorder_vec_dot_q_sycl::load(vgate, bx_offset, d_offset, iqs);
+
+#pragma unroll
+                    for (int j = 0; j < ncols_dst; ++j) {
+                        const char        * vy_j           = (const char *) vy + j * stride_col_y_bytes;
+                        const int8_t      * q8_1_quant_ptr = (const int8_t *) vy_j + iby * QK8_1;
+                        const sycl::half2 * q8_1_ds_ptr =
+                            (const sycl::half2 *) (vy_j + ncols + iby * sizeof(sycl::half2));
+
+                        // up and gate share the activation, so load it once and apply it twice
+                        const auto a = reorder_vec_dot_q_sycl::load_activations(q8_1_quant_ptr, q8_1_ds_ptr, iqs);
+
+                        partial_sum[j][0] += reorder_vec_dot_q_sycl::apply(wx, a);
+                        partial_gate[j][0] += reorder_vec_dot_q_sycl::apply(wg, a);
+                    }
+                } else {
+#pragma unroll
+                    for (int j = 0; j < ncols_dst; ++j) {
+                        const char        * vy_j           = (const char *) vy + j * stride_col_y_bytes;
+                        const int8_t      * q8_1_quant_ptr = (const int8_t *) vy_j + iby * QK8_1;
+                        const sycl::half2 * q8_1_ds_ptr =
+                            (const sycl::half2 *) (vy_j + ncols + iby * sizeof(sycl::half2));
+
+                        partial_sum[j][0] += reorder_vec_dot_q_sycl::dot(wx, q8_1_quant_ptr, q8_1_ds_ptr, iqs);
+                    }
+                }
+            } else {
+                const int ibx = row0 * blocks_per_row + i;
+                const auto bx_offset = block_type::get_block_offset(ibx, nblocks);
+                const auto d_offset  = block_type::get_d_offset(nrows, ncols, ibx);
+#pragma unroll
+                for (int j = 0; j < ncols_dst; ++j) {
+                    const char        * vy_j           = (const char *) vy + j * stride_col_y_bytes;
+                    const int8_t      * q8_1_quant_ptr = (const int8_t *) vy_j + iby * QK8_1;
+                    const sycl::half2 * q8_1_ds_ptr =
+                        (const sycl::half2 *) (vy_j + ncols + iby * sizeof(sycl::half2));
+
+                    partial_sum[j][0] +=
+                        reorder_vec_dot_q_sycl()(vx, bx_offset, d_offset, q8_1_quant_ptr, q8_1_ds_ptr, iqs);
+
+                    if constexpr (has_fusion) {
+                        partial_gate[j][0] +=
+                            reorder_vec_dot_q_sycl()(vgate, bx_offset, d_offset, q8_1_quant_ptr, q8_1_ds_ptr, iqs);
+                    }
                 }
             }
         }
@@ -218,17 +243,20 @@ static void mul_mat_vec_q_reorder_ncols(const void * __restrict__ vx, const void
 
 #pragma unroll
     for (int j = 0; j < ncols_dst; ++j) {
-        float sum = sycl::reduce_over_group(nd_item.get_sub_group(), partial_sum[j], std::plus<>());
+#pragma unroll
+        for (int r = 0; r < rows_per_sg; ++r) {
+            float sum = sycl::reduce_over_group(nd_item.get_sub_group(), partial_sum[j][r], std::plus<>());
 
-        if constexpr (has_fusion) {
-            const float gate = sycl::reduce_over_group(nd_item.get_sub_group(), partial_gate[j], std::plus<>());
+            if constexpr (has_fusion) {
+                const float gate = sycl::reduce_over_group(nd_item.get_sub_group(), partial_gate[j][r], std::plus<>());
 
-            // uniform across the launch; the launcher only instantiates SWIGLU and GEGLU
-            sum *= glu_op == GGML_GLU_OP_SWIGLU ? op_silu(gate) : op_gelu(gate);
-        }
+                // uniform across the launch; the launcher only instantiates SWIGLU and GEGLU
+                sum *= glu_op == GGML_GLU_OP_SWIGLU ? op_silu(gate) : op_gelu(gate);
+            }
 
-        if (sg.leader()) {
-            dst[j * stride_col_dst + row] = sum;
+            if (sg.leader() && row0 + r < nrows) {
+                dst[j * stride_col_dst + row0 + r] = sum;
+            }
         }
     }
 }
@@ -1841,8 +1869,8 @@ static void reorder_mul_mat_vec_q4_k_q8_1_sycl(const void * vx, const void * vy,
     });
 }
 
-template <int ncols_dst>
-static void reorder_mul_mat_vec_q4_k_q8_1_sycl_ncols(
+template <int ncols_dst, int rows_per_sg>
+static void reorder_mul_mat_vec_q4_k_q8_1_sycl_ncols_impl(
         const void * vx, const void * vy, float * dst,
         const int ncols, const int nrows,
         const int stride_col_y_bytes, const int stride_col_dst,
@@ -1850,18 +1878,29 @@ static void reorder_mul_mat_vec_q4_k_q8_1_sycl_ncols(
     GGML_ASSERT(ncols % QK_K == 0);
 
     constexpr size_t num_subgroups = WARP_SIZE;
-    const int block_num_y = ceil_div(nrows, GGML_SYCL_MMV_Y * (int) num_subgroups);
+    const int block_num_y = ceil_div(nrows, GGML_SYCL_MMV_Y * (int) num_subgroups * rows_per_sg);
     const sycl::range<3> block_nums(1, 1, block_num_y);
     const sycl::range<3> block_dims(1, GGML_SYCL_MMV_Y, num_subgroups * WARP_SIZE);
 
     stream->submit([&](sycl::handler & cgh) {
         cgh.parallel_for(sycl::nd_range<3>(block_nums * block_dims, block_dims),
                          [=](sycl::nd_item<3> nd_item) [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
-                             mul_mat_vec_q_reorder_ncols<reorder_vec_dot_q_sycl<GGML_TYPE_Q4_K>, ncols_dst>(
+                             mul_mat_vec_q_reorder_ncols<reorder_vec_dot_q_sycl<GGML_TYPE_Q4_K>, ncols_dst,
+                                                        /*has_fusion=*/ false, rows_per_sg>(
                                  vx, /*vgate=*/ nullptr, vy, dst, ncols, nrows, stride_col_y_bytes, stride_col_dst,
                                  /*glu_op=*/ GGML_GLU_OP_SWIGLU, nd_item);
                          });
     });
+}
+
+template <int ncols_dst>
+static void reorder_mul_mat_vec_q4_k_q8_1_sycl_ncols(
+        const void * vx, const void * vy, float * dst,
+        const int ncols, const int nrows,
+        const int stride_col_y_bytes, const int stride_col_dst,
+        dpct::queue_ptr stream) {
+    constexpr int rows_per_sg = ncols_dst >= 3 && ncols_dst <= 4 ? 2 : 1;
+    reorder_mul_mat_vec_q4_k_q8_1_sycl_ncols_impl<ncols_dst, rows_per_sg>(vx, vy, dst, ncols, nrows, stride_col_y_bytes, stride_col_dst, stream);
 }
 
 static void reorder_mul_mat_vec_q4_k_q8_1_sycl_switch_ncols(
@@ -1871,7 +1910,13 @@ static void reorder_mul_mat_vec_q4_k_q8_1_sycl_switch_ncols(
         dpct::queue_ptr stream) {
     switch (ncols_dst) {
         case 1: reorder_mul_mat_vec_q4_k_q8_1_sycl(vx, vy, dst, ncols, nrows, stream); break;
-        case 2: reorder_mul_mat_vec_q4_k_q8_1_sycl_ncols<2>(vx, vy, dst, ncols, nrows, stride_col_y_bytes, stride_col_dst, stream); break;
+        case 2:
+            if (nrows >= Q4_K_MMVQ_ROW_PAIR_MIN_NROWS) {
+                reorder_mul_mat_vec_q4_k_q8_1_sycl_ncols_impl<2, 2>(vx, vy, dst, ncols, nrows, stride_col_y_bytes, stride_col_dst, stream);
+            } else {
+                reorder_mul_mat_vec_q4_k_q8_1_sycl_ncols_impl<2, 1>(vx, vy, dst, ncols, nrows, stride_col_y_bytes, stride_col_dst, stream);
+            }
+            break;
         case 3: reorder_mul_mat_vec_q4_k_q8_1_sycl_ncols<3>(vx, vy, dst, ncols, nrows, stride_col_y_bytes, stride_col_dst, stream); break;
         case 4: reorder_mul_mat_vec_q4_k_q8_1_sycl_ncols<4>(vx, vy, dst, ncols, nrows, stride_col_y_bytes, stride_col_dst, stream); break;
         case 5: reorder_mul_mat_vec_q4_k_q8_1_sycl_ncols<5>(vx, vy, dst, ncols, nrows, stride_col_y_bytes, stride_col_dst, stream); break;
@@ -3104,7 +3149,6 @@ static void mul_mat_vec_q_moe(
     const int expert_idx = item_ct1.get_group(1);
     const int i02        = ids_dev[expert_idx];
 
-    const char * vx = (const char *) vx_base + (size_t) i02 * expert_weight_stride;
     const char * vy = (const char *) vy_base + (size_t) expert_idx * src1_row_stride;
     float *      dst = (float *) ((char *) dst_base + (size_t) expert_idx * dst_row_stride);
 
@@ -3113,6 +3157,15 @@ static void mul_mat_vec_q_moe(
     if (row >= nrows) {
         return;
     }
+
+    if (i02 == -1) { // skipped slot
+        if (item_ct1.get_local_id(2) == 0) {
+            dst[row] = 0.0f;
+        }
+        return;
+    }
+
+    const char * vx = (const char *) vx_base + (size_t) i02 * expert_weight_stride;
 
     const int     blocks_per_row  = ncols / qk;
     constexpr int blocks_per_warp = (vdr * WARP_SIZE + qi - 1) / qi;
@@ -3243,8 +3296,6 @@ bool ggml_sycl_mul_mat_vec_q_id(
                 vx_base, vy, ids_dev, dst_base, ncols, nrows, n_experts_used,
                 expert_weight_stride, dst_row_stride, src1_row_stride, stream);
             return true;
-<<<<<<< HEAD
-=======
         case GGML_TYPE_IQ2_XXS:
             launch_mul_mat_vec_q_moe<QK_K, QI2_XXS/2, block_iq2_xxs, VDR_IQ2_XXS_Q8_1_MMVQ, vec_dot_iq2_xxs_q8_1_moe>(
                 vx_base, vy, ids_dev, dst_base, ncols, nrows, n_experts_used,
@@ -3290,7 +3341,6 @@ bool ggml_sycl_mul_mat_vec_q_id(
                 vx_base, vy, ids_dev, dst_base, ncols, nrows, n_experts_used,
                 expert_weight_stride, dst_row_stride, src1_row_stride, stream);
             return true;
->>>>>>> ggml-org/master
         default:
             return false;
     }
@@ -3313,7 +3363,6 @@ static void mul_mat_vec_q_moe_reorder(
     const int expert_idx = item_ct1.get_group(1);
     const int i02        = ids_dev[expert_idx];
 
-    const char * vx  = (const char *) vx_base + (size_t) i02 * expert_weight_stride;
     const char * vy  = (const char *) vy_base + (size_t) expert_idx * src1_row_stride;
     float *      dst = (float *) ((char *) dst_base + (size_t) expert_idx * dst_row_stride);
 
@@ -3323,6 +3372,15 @@ static void mul_mat_vec_q_moe_reorder(
     }
 
     const auto sg = item_ct1.get_sub_group();
+
+    if (i02 == -1) { // skipped slot
+        if (sg.leader()) {
+            dst[row] = 0.0f;
+        }
+        return;
+    }
+
+    const char * vx = (const char *) vx_base + (size_t) i02 * expert_weight_stride;
 
     constexpr int vdr_mmvq = reorder_vec_dot_q_sycl::gtype == GGML_TYPE_Q8_0 ?
                             VDR_Q8_0_Q8_1_MMVQ : block_traits::vdr_mmvq;
@@ -3435,8 +3493,8 @@ bool ggml_sycl_mul_mat_vec_q_id_reorder(
     }
 }
 
-template <typename reorder_vec_dot_q_sycl, int ncols_dst>
-static void launch_mul_mat_vec_q_reorder_glu(const void * vx, const void * vgate, const void * vy, float * dst,
+template <typename reorder_vec_dot_q_sycl, int ncols_dst, int rows_per_sg>
+static void launch_mul_mat_vec_q_reorder_glu_impl(const void * vx, const void * vgate, const void * vy, float * dst,
                                              const int ncols, const int nrows, const int stride_col_y_bytes,
                                              const int stride_col_dst, const ggml_glu_op glu_op,
                                              dpct::queue_ptr stream) {
@@ -3444,22 +3502,21 @@ static void launch_mul_mat_vec_q_reorder_glu(const void * vx, const void * vgate
 
     constexpr size_t num_subgroups = WARP_SIZE;
 
-    const int            block_num_y = ceil_div(nrows, GGML_SYCL_MMV_Y * (int) num_subgroups);
+    const int            block_num_y = ceil_div(nrows, GGML_SYCL_MMV_Y * (int) num_subgroups * rows_per_sg);
     const sycl::range<3> block_nums(1, 1, block_num_y);
     const sycl::range<3> block_dims(1, GGML_SYCL_MMV_Y, num_subgroups * WARP_SIZE);
 
     stream->submit([&](sycl::handler & cgh) {
         cgh.parallel_for(sycl::nd_range<3>(block_nums * block_dims, block_dims),
                          [=](sycl::nd_item<3> nd_item) [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
-                             mul_mat_vec_q_reorder_ncols<reorder_vec_dot_q_sycl, ncols_dst, /*has_fusion=*/ true>(
+                             mul_mat_vec_q_reorder_ncols<reorder_vec_dot_q_sycl, ncols_dst, /*has_fusion=*/ true,
+                                                        rows_per_sg>(
                                  vx, vgate, vy, dst, ncols, nrows, stride_col_y_bytes, stride_col_dst, glu_op,
                                  nd_item);
                          });
     });
 }
 
-<<<<<<< HEAD
-=======
 template <typename reorder_vec_dot_q_sycl, int ncols_dst>
 static void launch_mul_mat_vec_q_reorder_glu(const void * vx, const void * vgate, const void * vy, float * dst,
                                              const int ncols, const int nrows, const int stride_col_y_bytes,
@@ -3686,7 +3743,6 @@ static bool mul_mat_vec_q_glu_reorder_ncols(enum ggml_glu_op glu_op, const void 
     return (launch(std::integral_constant<int, Ns>{}) || ...);
 }
 
->>>>>>> ggml-org/master
 bool ggml_sycl_mul_mat_vec_q_glu_reorder(enum ggml_type src0_type, enum ggml_glu_op glu_op, const void * vx,
                                          const void * vgate, const void * vy, float * dst, int ncols, int nrows,
                                          int ncols_dst, int stride_col_y_bytes, int stride_col_dst,
@@ -3695,43 +3751,6 @@ bool ggml_sycl_mul_mat_vec_q_glu_reorder(enum ggml_type src0_type, enum ggml_glu
         return false;
     }
 
-<<<<<<< HEAD
-    using vec_dot = reorder_vec_dot_q_sycl<GGML_TYPE_Q4_K>;
-
-    switch (ncols_dst) {
-        case 1:
-            launch_mul_mat_vec_q_reorder_glu<vec_dot, 1>(vx, vgate, vy, dst, ncols, nrows, stride_col_y_bytes,
-                                                         stride_col_dst, glu_op, stream);
-            return true;
-        case 2:
-            launch_mul_mat_vec_q_reorder_glu<vec_dot, 2>(vx, vgate, vy, dst, ncols, nrows, stride_col_y_bytes,
-                                                         stride_col_dst, glu_op, stream);
-            return true;
-        case 3:
-            launch_mul_mat_vec_q_reorder_glu<vec_dot, 3>(vx, vgate, vy, dst, ncols, nrows, stride_col_y_bytes,
-                                                         stride_col_dst, glu_op, stream);
-            return true;
-        case 4:
-            launch_mul_mat_vec_q_reorder_glu<vec_dot, 4>(vx, vgate, vy, dst, ncols, nrows, stride_col_y_bytes,
-                                                         stride_col_dst, glu_op, stream);
-            return true;
-        case 5:
-            launch_mul_mat_vec_q_reorder_glu<vec_dot, 5>(vx, vgate, vy, dst, ncols, nrows, stride_col_y_bytes,
-                                                         stride_col_dst, glu_op, stream);
-            return true;
-        case 6:
-            launch_mul_mat_vec_q_reorder_glu<vec_dot, 6>(vx, vgate, vy, dst, ncols, nrows, stride_col_y_bytes,
-                                                         stride_col_dst, glu_op, stream);
-            return true;
-        case 7:
-            launch_mul_mat_vec_q_reorder_glu<vec_dot, 7>(vx, vgate, vy, dst, ncols, nrows, stride_col_y_bytes,
-                                                         stride_col_dst, glu_op, stream);
-            return true;
-        case 8:
-            launch_mul_mat_vec_q_reorder_glu<vec_dot, 8>(vx, vgate, vy, dst, ncols, nrows, stride_col_y_bytes,
-                                                         stride_col_dst, glu_op, stream);
-            return true;
-=======
     switch (src0_type) {
         case GGML_TYPE_Q4_K:
             return mul_mat_vec_q_glu_reorder_ncols<GGML_TYPE_Q4_K, 1, 2, 3, 4, 5, 6, 7, 8>(
@@ -3740,7 +3759,6 @@ bool ggml_sycl_mul_mat_vec_q_glu_reorder(enum ggml_type src0_type, enum ggml_glu
             // fusion declines q5_K past 5 columns
             return mul_mat_vec_q_glu_reorder_ncols<GGML_TYPE_Q5_K, 1, 2, 3, 4, 5>(
                 glu_op, vx, vgate, vy, dst, ncols, nrows, ncols_dst, stride_col_y_bytes, stride_col_dst, stream);
->>>>>>> ggml-org/master
         default:
             return false;
     }

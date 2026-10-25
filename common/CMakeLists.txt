@@ -53,12 +53,15 @@ endif()
 
 set(TARGET llama-common)
 
+include(parsers/sources.cmake)
+
 add_library(${TARGET}
     arg.cpp
     arg.h
     base64.hpp
     chat-auto-parser-generator.cpp
     chat-auto-parser-helpers.cpp
+    ${LLAMA_CHAT_PARSERS_SOURCES}
     chat-auto-parser.h
     chat-diff-analyzer.cpp
     chat-peg-parser.cpp

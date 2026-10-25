@@ -118,8 +118,6 @@
     elem = (char)((bits8.s7 & 0xFF000000) >> 24); \
     total_sums += convert_int(elem) * scale * shared_y; \
 
-<<<<<<< HEAD
-=======
 // ============================================================================
 // Split-K variant for small-M decode GEMVs.
 // ----------------------------------------------------------------------------
@@ -203,7 +201,6 @@ __kernel void kernel_gemv_noshuffle_q8_0_f32_splitk(
     }
 }
 
->>>>>>> ggml-org/master
 #ifdef ADRENO_GPU
 REQD_SUBGROUP_SIZE_64
 #endif

@@ -3,9 +3,10 @@
 #pragma clang diagnostic ignored "-Wunused-but-set-variable"
 
 #include <HAP_farf.h>
-#include <HAP_perf.h>
-
 #include <string.h>
+
+#include "hex-common.h"
+#include "hex-profile.h"
 
 #include "hvx-copy.h"
 #include "hvx-utils.h"
@@ -14,30 +15,14 @@
 #include "ggml-common.h"
 #include "htp-ctx.h"
 #include "htp-ops.h"
-<<<<<<< HEAD
-=======
 #include "htp-tensor.h"
 #include "fill-ops.h"
->>>>>>> ggml-org/master
 
 // ggml op_params layout for FILL:
 //   op_params[0] (as float) - the scalar fill value
 
-#define fill_preamble \
+#define fill_preamble                          \
     const struct htp_tensor * dst = octx->dst; \
-<<<<<<< HEAD
-    \
-    const uint32_t ne0 = dst->ne[0]; \
-    const uint32_t ne1 = dst->ne[1]; \
-    const uint32_t ne2 = dst->ne[2]; \
-    const uint32_t ne3 = dst->ne[3]; \
-    \
-    const uint32_t nb1 = dst->nb[1]; \
-    const uint32_t nb2 = dst->nb[2]; \
-    const uint32_t nb3 = dst->nb[3]; \
-    \
-    const uint32_t nr = ne1 * ne2 * ne3;
-=======
                                                \
     const uint32_t ne0 = dst->ne[0];           \
     const uint32_t ne1 = dst->ne[1];           \
@@ -47,18 +32,13 @@
     const uint32_t nb1 = dst->nb[1];           \
     const uint32_t nb2 = dst->nb[2];           \
     const uint32_t nb3 = dst->nb[3];
->>>>>>> ggml-org/master
 
 struct htp_fill_context {
     struct htp_ops_context * octx;
     const struct htp_fill_kernel_params * kparams;
     uint32_t nrows_per_thread;
     uint32_t total_rows;  // ne1 * ne2 * ne3
-<<<<<<< HEAD
-    bool     opt_path;
-=======
     uint32_t row_start;
->>>>>>> ggml-org/master
     HVX_Vector splat_vec;
     uint32_t   elem_size;
 };
@@ -69,10 +49,15 @@ static void fill_thread_contiguous(unsigned int nth, unsigned int ith, void * da
     fill_preamble;
 
     // Parallelise over the flat row index spanning ne1*ne2*ne3
-    const uint32_t ir0 = fctx->nrows_per_thread * ith;
-    const uint32_t ir1 = MIN(ir0 + fctx->nrows_per_thread, fctx->total_rows);
+    const uint32_t ir0 = fctx->row_start + fctx->nrows_per_thread * ith;
+    const uint32_t ir1 = MIN(ir0 + fctx->nrows_per_thread, fctx->row_start + fctx->total_rows);
 
-    uint64_t t1 = HAP_perf_get_qtimer_count();
+    if (ir0 >= ir1) {
+        return;
+    }
+
+    struct htp_thread_trace * tr = &octx->ctx->trace[ith];
+    htp_trace_event_start(tr, HTP_TRACE_EVT_HVX_COMP, (uint16_t) ir0);
 
     const uint32_t elem_start = ir0 * ne0;
     const uint32_t elem_end   = ir1 * ne0;
@@ -109,14 +94,8 @@ static void fill_thread_strided(unsigned int nth, unsigned int ith, void * data)
         hvx_splat_u(dst_ptr, fctx->splat_vec, ne0, fctx->elem_size);
     }
 
-<<<<<<< HEAD
-    uint64_t t2 = HAP_perf_get_qtimer_count();
-    FARF(HIGH, "fill %u/%u: rows %u:%u usec %u\n",
-         ith, nth, ir0, ir1, (unsigned) HAP_perf_qtimer_count_to_us(t2 - t1));
-=======
     htp_trace_event_stop(tr, HTP_TRACE_EVT_HVX_COMP, (uint16_t) ir1);
     FARF(HIGH, "fill-strided %u/%u: rows %u:%u\n", ith, nth, ir0, ir1);
->>>>>>> ggml-org/master
 }
 
 int op_fill(struct htp_ops_context * octx) {
@@ -128,14 +107,6 @@ int op_fill(struct htp_ops_context * octx) {
         return HTP_STATUS_NO_SUPPORT;
     }
 
-<<<<<<< HEAD
-    if (octx->flags & HTP_OPFLAGS_SKIP_COMPUTE) {
-        return HTP_STATUS_OK;
-    }
-
-    // nr = ne1*ne2*ne3 (flat row count across all outer dims); parallelise over it.
-    const uint32_t n_threads = MIN(nr, octx->n_threads);
-=======
     uint32_t row_start = 0;
     uint32_t nrows     = kparams->total_rows;
 
@@ -154,7 +125,6 @@ int op_fill(struct htp_ops_context * octx) {
     }
 
     const uint32_t n_threads = octx->n_threads;
->>>>>>> ggml-org/master
 
     FARF(HIGH, "fill: (%ux%ux%ux%u) type=%u ktype=%u\n",
          dst->ne[0], dst->ne[1], dst->ne[2], dst->ne[3], dst->type, kparams->kernel_type);
@@ -164,17 +134,11 @@ int op_fill(struct htp_ops_context * octx) {
 
     struct htp_fill_context fctx = {
         .octx             = octx,
-<<<<<<< HEAD
-        .nrows_per_thread = (nr + n_threads - 1) / n_threads,
-        .total_rows       = nr,
-        .opt_path         = opt_path,
-=======
         .kparams          = kparams,
         .nrows_per_thread = fastdiv(nrows + n_threads - 1, &octx->n_threads_div),
         .total_rows       = nrows,
         .row_start        = row_start,
         .elem_size        = kparams->elem_size,
->>>>>>> ggml-org/master
     };
 
     switch (dst->type) {
@@ -188,15 +152,11 @@ int op_fill(struct htp_ops_context * octx) {
         return HTP_STATUS_NO_SUPPORT;
     }
 
-<<<<<<< HEAD
-    worker_pool_run_func(octx->ctx->worker_pool, fill_thread, &fctx, n_threads);
-=======
     work_queue_func_t worker = (kparams->kernel_type == HTP_FILL_KERNEL_CONTIGUOUS)
         ? fill_thread_contiguous
         : fill_thread_strided;
 
     work_queue_run(octx->ctx->work_queue, worker, &fctx, n_threads);
->>>>>>> ggml-org/master
 
     return HTP_STATUS_OK;
 }

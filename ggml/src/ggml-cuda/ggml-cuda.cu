@@ -3,9 +3,6 @@
 #include "ggml-backend-impl.h"
 
 #include "ggml-cuda/allreduce.cuh"
-#include "ggml-cuda/async-pipeline.cuh"
-#include "ggml-cuda/nccl-stagger.cuh"
-#include "ggml-cuda/numa-gpu-bind.cuh"
 #include "ggml-cuda/common.cuh"
 #include "ggml-cuda/acc.cuh"
 #include "ggml-cuda/add-id.cuh"
@@ -36,6 +33,7 @@
 #include "ggml-cuda/mmq.cuh"
 #include "ggml-cuda/mmvf.cuh"
 #include "ggml-cuda/mmvq.cuh"
+#include "ggml-cuda/moe-weighted-reduction.cuh"
 #include "ggml-cuda/norm.cuh"
 #include "ggml-cuda/opt-step-adamw.cuh"
 #include "ggml-cuda/opt-step-sgd.cuh"
@@ -97,9 +95,6 @@
 
 static_assert(sizeof(half) == sizeof(ggml_fp16_t), "wrong fp16 size");
 
-
-// Global async pipeline context (initialized at backend init)
-ggml_cuda_async_pipeline ggml_cuda_async_pipeline_global;
 #define GGML_LOG_WARN_ONCE(str) \
     { static std::once_flag warn_flag; std::call_once(warn_flag, []() { GGML_LOG_WARN(str); }); }
 
@@ -263,6 +258,7 @@ static int ggml_cuda_parse_id(char devName[]) {
     }
     archNum += archMajor * 0x100;
     archNum += archMinor;
+
     return archNum;
 }
 #endif // defined(GGML_USE_HIP)
@@ -354,11 +350,7 @@ static ggml_cuda_device_info ggml_cuda_init() {
 
         info.default_tensor_split[id] = total_vram;
         total_vram += device_vram;
-#if defined(GGML_USE_HIP)
-        info.devices[id].integrated = prop.integrated;
-#else
         info.devices[id].integrated = false; // Temporarily disabled due to issues with corrupted output (e.g. #15034)
-#endif
         info.devices[id].nsm        = prop.multiProcessorCount;
         info.devices[id].smpb       = prop.sharedMemPerBlock;
         info.devices[id].warp_size  = prop.warpSize;
@@ -453,14 +445,6 @@ static ggml_cuda_device_info ggml_cuda_init() {
     }
 
     return info;
-
-    // Initialize NCCL env vars for K80 topology
-#ifdef GGML_USE_NCCL
-    ggml_cuda_nccl_init_env();
-#endif
-    // Enable async pipeline (lazy init - no cudaSetDevice calls here)
-    ggml_cuda_async_pipeline_global.enable();
-    GGML_LOG_INFO("Async GPU pipeline: enabled (lazy init per-GPU on first use)\n");
 }
 
 const ggml_cuda_device_info & ggml_cuda_info() {
@@ -1491,13 +1475,6 @@ struct batched_mul_mat_traits<GGML_TYPE_F16> {
     static inline auto convert_nc(ggml_type src_type) { return ggml_get_to_fp16_nc_cuda(src_type); }
 };
 
-// Select cuBLAS GEMM algorithm: tensor ops require Volta+ (cc >= 70) and FP16 compute type
-static inline cublasGemmAlgo_t ggml_cuda_cublas_gemm_algo(cublasComputeType_t cu_compute_type, int device_cc) {
-    bool has_tensor_cores = (device_cc >= 70);
-    bool fp16_compute = (cu_compute_type == CUBLAS_COMPUTE_16F || cu_compute_type == CUBLAS_COMPUTE_32F_FAST_16F);
-    return (has_tensor_cores && fp16_compute) ? CUBLAS_GEMM_DEFAULT_TENSOR_OP : CUBLAS_GEMM_DEFAULT;
-}
-
 template<ggml_type compute_type>
 static void ggml_cuda_mul_mat_cublas_impl(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
     using traits = batched_mul_mat_traits<compute_type>;
@@ -1546,13 +1523,10 @@ static void ggml_cuda_mul_mat_cublas_impl(ggml_backend_cuda_context & ctx, const
             const auto convert_func = traits::convert(src0->type);
             GGML_ASSERT(convert_func != nullptr);
             convert_func(src0->data, src0_alloc.get(), ggml_nelements(src0), main_stream);
-            // After converting contiguous quantized data to compute_type,
-            // the data is contiguous in compute_type elements. Use dimension-based
-            // strides instead of block_size scaling.
-            s01 = ne00;
-            s02 = ne01*s01;
-            s03 = ne02*s02;
-            is_src0_cont_2 = true;
+            const size_t src0_bs = ggml_blck_size(src0->type);
+            s01 *= src0_bs;
+            s02 *= src0_bs;
+            s03 *= src0_bs;
         } else {
             const auto convert_func = traits::convert_nc(src0->type);
             GGML_ASSERT(convert_func != nullptr);
@@ -1574,13 +1548,10 @@ static void ggml_cuda_mul_mat_cublas_impl(ggml_backend_cuda_context & ctx, const
             const auto convert_func = traits::convert(src1->type);
             GGML_ASSERT(convert_func != nullptr);
             convert_func(src1->data, src1_alloc.get(), ggml_nelements(src1), main_stream);
-            // After converting contiguous quantized data to compute_type,
-            // the data is contiguous in compute_type elements. Use dimension-based
-            // strides instead of block_size scaling.
-            s11 = ne10;
-            s12 = ne11*s11;
-            s13 = ne12*s12;
-            is_src1_cont_2 = true;
+            const size_t src1_bs = ggml_blck_size(src1->type);
+            s11 *= src1_bs;
+            s12 *= src1_bs;
+            s13 *= src1_bs;
         } else {
             const auto convert_func = traits::convert_nc(src1->type);
             GGML_ASSERT(convert_func != nullptr);
@@ -1636,12 +1607,10 @@ static void ggml_cuda_mul_mat_cublas_impl(ggml_backend_cuda_context & ctx, const
     const int64_t r2 = ne12/ne02;
     const int64_t r3 = ne13/ne03;
 
-    // Kepler sm_37: Ex APIs fail internally with CUBLAS_STATUS_ARCH_MISMATCH.
-    // Use legacy Sgemm batched APIs for Kepler (cc < 500).
-    const bool is_kepler = (cc < 500);
-
+    // Theoretically cublasGemmStridedBatchedEx would always work, even for a single matrix.
+    // However, for some old NVIDIA and AMD GPUs the strided/Ex GEMM is much slower,
+    //     probably because the internal kernel selection logic is suboptimal.
     if (compute_type == GGML_TYPE_F32 && ne12 == 1 && ne13 == 1) {
-        // Single matrix, F32: Sgemm always works
         CUBLAS_CHECK(
             cublasSgemm(cublas_h, CUBLAS_OP_T, CUBLAS_OP_N,
                     ne01, ne11, ne10,
@@ -1649,82 +1618,32 @@ static void ggml_cuda_mul_mat_cublas_impl(ggml_backend_cuda_context & ctx, const
                                            (const float *) src1_ptr, s11,
                     (const float *) beta,  (float       *)  dst_ptr, ldc));
     } else if (ne12 == 1 && ne13 == 1) {
-        // Single matrix, non-F32 compute type -> data converted to F32 for Kepler
-        if (is_kepler) {
-            CUBLAS_CHECK(
-                cublasSgemm(cublas_h, CUBLAS_OP_T, CUBLAS_OP_N,
-                        ne01, ne11, ne10,
-                        (const float *) alpha, (const float *) src0_ptr, s01,
-                                               (const float *) src1_ptr, s11,
-                        (const float *) beta,  (float       *)  dst_ptr, ne0));
-        } else {
-            CUBLAS_CHECK(
-                cublasGemmEx(cublas_h, CUBLAS_OP_T, CUBLAS_OP_N,
-                        ne01, ne11, ne10,
-                        alpha, src0_ptr, cu_data_type_a, s01,
-                               src1_ptr, cu_data_type_b, s11,
-                        beta,   dst_ptr, cu_data_type,   ne0,
-                        cu_compute_type,
-                        ggml_cuda_cublas_gemm_algo(cu_compute_type, cc)));
-        }
+        CUBLAS_CHECK(
+            cublasGemmEx(cublas_h, CUBLAS_OP_T, CUBLAS_OP_N,
+                    ne01, ne11, ne10,
+                    alpha, src0_ptr, cu_data_type_a, s01,
+                           src1_ptr, cu_data_type_b, s11,
+                    beta,   dst_ptr, cu_data_type,   ldc,
+                    cu_compute_type,
+                    CUBLAS_GEMM_DEFAULT_TENSOR_OP));
     } else if (r2 == 1 && r3 == 1 && is_src0_cont_2 && is_src1_cont_2) {
         // with a [0, 2, 1, 3] perm. and ne02==1 the matrix strides need to be determined from dim 3:
         const int64_t sma = ne02 == 1 ? s03 : s02;
         const int64_t smb = ne12 == 1 ? s13 : s12;
+
+        // there is no broadcast and src0, src1 are contiguous across dims 2, 3
+        // use cublasGemmStridedBatchedEx
         CUBLAS_CHECK(
-        // Kepler contiguous batched: SgemmStridedBatched (legacy API for sm_37)
-            cublasSgemmStridedBatched(cublas_h, CUBLAS_OP_T, CUBLAS_OP_N,
-                    ne01, ne11, ne10,
-                    (const float *) alpha, (const float *) src0_ptr, s01, sma,
-                                               (const float *) src1_ptr, s11, smb,
-                    (const float *) beta,  (float       *)  dst_ptr, ne0, ne1*ne0,
-                    ne12*ne13));
-    } else if (r2 == 1 && r3 == 1 && is_src0_cont_2 && is_src1_cont_2) {
-        // Non-Kepler contiguous batched: GemmStridedBatchedEx
-        const int64_t sma = ne02 == 1 ? s03 : s02;
-        const int64_t smb = ne12 == 1 ? s13 : s12;
-        CUBLAS_CHECK(
-            cublasGemmStridedBatchedEx(cublas_h, CUBLAS_OP_T, CUBLAS_OP_N,
-                    ne01, ne11, ne10,
-                    alpha, src0_ptr, cu_data_type_a, s01, sma,
-                           src1_ptr, cu_data_type_b, s11, smb,
-                    beta,   dst_ptr, cu_data_type,   ldc, ne1*ldc,
-                    ne12*ne13,
-                    cu_compute_type,
-                    ggml_cuda_cublas_gemm_algo(cu_compute_type, cc)));
-    } else if (is_kepler) {
-        // Kepler general batched with broadcast: SgemmBatched
-        const int64_t ne23 = ne12*ne13;
-
-        ggml_cuda_pool_alloc<const float *> ptrs_src(ctx.pool(), 2*ne23);
-        ggml_cuda_pool_alloc<float *> ptrs_dst(ctx.pool(), 1*ne23);
-
-        const int threads_x = 16;
-        const int threads_y = 16;
-        const dim3 block_dims(threads_x, threads_y);
-        const dim3 grid_dims(
-            (ne13 + threads_x - 1) / threads_x,
-            (ne12 + threads_y - 1) / threads_y
-        );
-        k_compute_batched_ptrs<<<grid_dims, block_dims, 0, main_stream>>>(
-                src0_ptr, src1_ptr, dst_ptr,
-                (const void **)ptrs_src.get(), (void **)ptrs_dst.get(),
-                ne12, ne13, ne23,
-                s02*sizeof(float), s03*sizeof(float),
-                s12*sizeof(float), s13*sizeof(float),
-                nbd2, nbd3, r2, r3);
-
-        CUDA_CHECK(cudaGetLastError());
-
-        CUBLAS_CHECK(
-            cublasSgemmBatched(cublas_h, CUBLAS_OP_T, CUBLAS_OP_N,
-                    ne01, ne11, ne10,
-                    (const float *) alpha, (const float * const *) (ptrs_src.get() + 0*ne23), s01,
-                           (const float * const *) (ptrs_src.get() + 1*ne23), s11,
-                    (const float *) beta,  (float **) (ptrs_dst.get() + 0*ne23), ne0,
-                    ne23));
+        cublasGemmStridedBatchedEx(cublas_h, CUBLAS_OP_T, CUBLAS_OP_N,
+                ne01, ne11, ne10,
+                alpha, src0_ptr, cu_data_type_a, s01, sma,     // strideA
+                       src1_ptr, cu_data_type_b, s11, smb,     // strideB
+                beta,   dst_ptr, cu_data_type,   ldc, ne1*ldc, // strideC
+                ne12*ne13,
+                cu_compute_type,
+                CUBLAS_GEMM_DEFAULT_TENSOR_OP));
     } else {
-        // Non-Kepler general batched: GemmBatchedEx
+        // use cublasGemmBatchedEx
         const int64_t ne23 = ne12*ne13;
 
         ggml_cuda_pool_alloc<const void *> ptrs_src(ctx.pool(), 2*ne23);
@@ -1752,7 +1671,6 @@ static void ggml_cuda_mul_mat_cublas_impl(ggml_backend_cuda_context & ctx, const
 
         CUDA_CHECK(cudaGetLastError());
 
-        GGML_LOG_INFO("ggml_cuda_mul_mat_cublas_impl: cu_compute_type=%d cc=%d algo=%d\n", cu_compute_type, cc, ggml_cuda_cublas_gemm_algo(cu_compute_type, cc));
         CUBLAS_CHECK(
         cublasGemmBatchedEx(cublas_h, CUBLAS_OP_T, CUBLAS_OP_N,
                 ne01, ne11, ne10,
@@ -1761,7 +1679,7 @@ static void ggml_cuda_mul_mat_cublas_impl(ggml_backend_cuda_context & ctx, const
                 beta,  (      void **) (ptrs_dst.get() + 0*ne23), cu_data_type,   ldc,
                 ne23,
                 cu_compute_type,
-                ggml_cuda_cublas_gemm_algo(cu_compute_type, cc));
+                CUBLAS_GEMM_DEFAULT_TENSOR_OP));
     }
 
     // Convert output back to F32 if needed
@@ -4869,13 +4787,6 @@ static void ggml_cuda_graph_evaluate_and_capture(ggml_backend_cuda_context * cud
                 }
                 GGML_ASSERT(ok);
 
-
-                // Async pipeline: mark completion only for heavy compute ops
-                // (lazy init - creates prefetch stream only on first access)
-                if (node->op == GGML_OP_MUL_MAT || node->op == GGML_OP_MUL_MAT_ID) {
-                    ggml_cuda_async_mark_layer_complete(cuda_ctx->device, cuda_ctx->stream());
-                }
-
                 if (!is_concurrent_event_active) {
                     try_launch_concurrent_event(node);
                }
@@ -5020,8 +4931,6 @@ static void ggml_backend_cuda_event_wait(ggml_backend_t backend, ggml_backend_ev
 }
 
 static void ggml_backend_cuda_graph_optimize(ggml_backend_t backend, ggml_cgraph * cgraph, ggml_backend_graph_optimize_params * params) {
-    GGML_UNUSED(params);
-
     ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *) backend->context;
 
     const bool disable_fusion = ggml_cuda_fusion_disabled();
@@ -5155,9 +5064,11 @@ static void ggml_backend_cuda_graph_optimize(ggml_backend_t backend, ggml_cgraph
     ggml_cuda_stream_context & stream_context = cuda_ctx->stream_context();
     stream_context.reset();
 
-    if (!use_cuda_graph || ggml_backend_cuda_get_device_count() != 1) {
+    if (!use_cuda_graph) {
         return;
     }
+
+    ggml_cuda_set_device(cuda_ctx->device);
 
     // number of out-degrees for a particular node
     std::unordered_map<const ggml_tensor *, int> fan_out;
@@ -5786,10 +5697,6 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
                     case GGML_TYPE_IQ4_NL:
                     case GGML_TYPE_IQ4_XS:
                     case GGML_TYPE_BF16:
-                    // TurboQuant KV cache types — UnobligatedRascal sm_37
-                    case GGML_TYPE_TURBO3_0:
-                    case GGML_TYPE_TURBO4_0:
-                    case GGML_TYPE_TURBO2_0:
                         return true;
                     default:
                         return false;
@@ -5830,11 +5737,6 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
                         // 32-value sub-blocks, the row size does not guarantee
                         // the QK_K super-blocks the get_rows kernel iterates on
                         return op->src[0]->ne[0] % QK_K == 0;
-                    // TurboQuant: 128-element blocks
-                    case GGML_TYPE_TURBO3_0:
-                    case GGML_TYPE_TURBO4_0:
-                    case GGML_TYPE_TURBO2_0:
-                        return op->src[0]->ne[0] % 128 == 0;
                     default:
                         return false;
                 }
@@ -5847,9 +5749,7 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
                            (
                                (op->type == GGML_TYPE_F32 || op->type == GGML_TYPE_F16 || op->type == GGML_TYPE_BF16 ||
                                op->type == GGML_TYPE_Q4_0 || op->type == GGML_TYPE_Q4_1 || op->type == GGML_TYPE_Q5_0 ||
-                               op->type == GGML_TYPE_Q5_1 || op->type == GGML_TYPE_Q8_0 || op->type == GGML_TYPE_IQ4_NL ||
-                               // TurboQuant KV cache types — UnobligatedRascal sm_37
-                               op->type == GGML_TYPE_TURBO3_0 || op->type == GGML_TYPE_TURBO4_0 || op->type == GGML_TYPE_TURBO2_0) &&
+                               op->type == GGML_TYPE_Q5_1 || op->type == GGML_TYPE_Q8_0 || op->type == GGML_TYPE_IQ4_NL) &&
                                op->src[0]->type == GGML_TYPE_F32
                            ) || (
                                op->type == GGML_TYPE_F16 && op->src[0]->type == GGML_TYPE_F16
@@ -6278,8 +6178,8 @@ static ggml_backend_feature * ggml_backend_cuda_get_features(ggml_backend_reg_t 
         features.push_back({ "USE_GRAPHS", "1" });
     #endif
 
-    #ifdef GGML_CUDA_FA_ALL_QUANTS
-        features.push_back({ "FA_ALL_QUANTS", "1" });
+    #ifdef GGML_CUDA_FA_QUANTS
+        features.push_back({ "FA_QUANTS", GGML_CUDA_FA_QUANTS });
     #endif
 
     {

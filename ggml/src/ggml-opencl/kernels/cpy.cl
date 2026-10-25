@@ -288,8 +288,6 @@ kernel void kernel_cpy_i32_i32(
         dst_data[i00] = src[0];
     }
 }
-<<<<<<< HEAD
-=======
 
 // Contiguous f32 copy, one work item per float4 over the whole tensor. The kernels above map
 // one workgroup to each row, which leaves a tensor with few long rows on a single compute unit.
@@ -400,4 +398,3 @@ kernel void kernel_cpy_f32_i32(
         out[0] = convert_int_rtz(src[0]);
     }
 }
->>>>>>> ggml-org/master

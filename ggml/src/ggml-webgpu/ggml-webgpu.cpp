@@ -374,18 +374,26 @@ static wgpu::Buffer ggml_webgpu_tensor_buf(const ggml_tensor * tensor) {
     return ctx->buffer;
 }
 
+// Binding offset for a tensor: the largest aligned offset at or before the tensor whose
+// distance to the tensor is a whole number of type blocks, so shaders can index the
+// misalignment in elements even for block quantized types.
+static size_t ggml_webgpu_tensor_align_offset(const ggml_tensor * t, size_t alignment) {
+    const size_t offset    = ggml_webgpu_tensor_offset(t);
+    const size_t type_size = ggml_type_size(t->type);
+    size_t       aligned   = offset & ~(alignment - 1);
+    while ((offset - aligned) % type_size != 0) {
+        GGML_ASSERT(aligned >= alignment);
+        aligned -= alignment;
+    }
+    return aligned;
+}
+
 static size_t ggml_webgpu_tensor_misalignment(const ggml_tensor * t, size_t alignment) {
-    size_t offset = ggml_webgpu_tensor_offset(t);
-    return offset & (alignment - 1);
+    return ggml_webgpu_tensor_offset(t) - ggml_webgpu_tensor_align_offset(t, alignment);
 }
 
 static size_t ggml_webgpu_tensor_misalignment(webgpu_context & ctx, const ggml_tensor * t) {
     return ggml_webgpu_tensor_misalignment(t, ctx->global_ctx->capabilities.limits.minStorageBufferOffsetAlignment);
-}
-
-static size_t ggml_webgpu_tensor_align_offset(const ggml_tensor * t, size_t alignment) {
-    size_t offset = ggml_webgpu_tensor_offset(t);
-    return offset & ~(alignment - 1);
 }
 
 static size_t ggml_webgpu_tensor_align_offset(webgpu_context & ctx, const ggml_tensor * t) {
@@ -1855,10 +1863,12 @@ static webgpu_encoded_op ggml_webgpu_mul_mat_id(webgpu_context & ctx,
     // params for mul_mat_id_gather.wgsl
     std::vector<uint32_t> gather_params = {
         (uint32_t) (ggml_webgpu_tensor_misalignment(ctx, src2) / ggml_type_size(src2->type)),
+        (uint32_t) (ggml_webgpu_tensor_misalignment(ctx, dst) / ggml_type_size(dst->type)),
         param_n_expert,
         param_n_expert_used,
         param_n_tokens,
         (uint32_t) (src2->nb[1] / ggml_type_size(src2->type)),
+        (uint32_t) dst->ne[0],
     };
 
     const size_t dst_offset       = ggml_webgpu_tensor_offset(dst);
@@ -1880,6 +1890,8 @@ static webgpu_encoded_op ggml_webgpu_mul_mat_id(webgpu_context & ctx,
                                           ggml_webgpu_tensor_binding_size(ctx, src2)),
         ggml_webgpu_make_bind_group_entry(1, ggml_webgpu_tensor_buf(dst), ids_cache_align_offset, ids_cache_bind_size),
         ggml_webgpu_make_bind_group_entry(2, ggml_webgpu_tensor_buf(dst), ids_tiles_align_offset, ids_tiles_bind_size),
+        ggml_webgpu_make_bind_group_entry(3, ggml_webgpu_tensor_buf(dst), ggml_webgpu_tensor_align_offset(ctx, dst),
+                                          ggml_webgpu_tensor_binding_size(ctx, dst)),
     };
 
     dispatches.push_back({
@@ -4150,16 +4162,17 @@ static void ggml_backend_webgpu_request_adapter(wgpu::Instance & instance, wgpu:
     options.nextInChain                   = &adapterTogglesDesc;
 #endif
 
-    instance.WaitAny(instance.RequestAdapter(
-                         &options, wgpu::CallbackMode::AllowSpontaneous,
-                         [&adapter](wgpu::RequestAdapterStatus status, wgpu::Adapter _adapter, const char * message) {
-                             if (status != wgpu::RequestAdapterStatus::Success) {
-                                 GGML_LOG_ERROR("ggml_webgpu: Failed to get an adapter: %s\n", message);
-                                 return;
-                             }
-                             adapter = std::move(_adapter);
-                         }),
-                     UINT64_MAX);
+    instance.WaitAny(
+        instance.RequestAdapter(
+            &options, wgpu::CallbackMode::AllowSpontaneous,
+            [&adapter](wgpu::RequestAdapterStatus status, wgpu::Adapter _adapter, wgpu::StringView message) {
+                if (status != wgpu::RequestAdapterStatus::Success) {
+                    GGML_LOG_ERROR("ggml_webgpu: Failed to get an adapter: %s\n", std::string(message).c_str());
+                    return;
+                }
+                adapter = std::move(_adapter);
+            }),
+        UINT64_MAX);
 }
 
 static void create_webgpu_device(ggml_backend_webgpu_reg_context * ctx) {
@@ -4473,12 +4486,8 @@ static bool ggml_backend_webgpu_device_supports_op(ggml_backend_dev_t dev, const
                            (src1->type == GGML_TYPE_I64 || src1->type == GGML_TYPE_I32));
             break;
         case GGML_OP_GET_ROWS:
-<<<<<<< HEAD
-            if (src0->type == GGML_TYPE_F32 || src0->type == GGML_TYPE_F16 || ggml_webgpu_supported_qtype(src0->type)) {
-=======
             if (src0->type == GGML_TYPE_F32 || src0->type == GGML_TYPE_F16 || src0->type == GGML_TYPE_BF16 ||
                 ggml_webgpu_supported_qtype(src0->type)) {
->>>>>>> ggml-org/master
                 supports_op = (op->type == GGML_TYPE_F32);
             } else if (src0->type == GGML_TYPE_I32) {
                 supports_op = op->type == GGML_TYPE_I32;

@@ -10,11 +10,8 @@
 
 #define GGML_COMMON_DECL_C
 #include "ggml-common.h"
-<<<<<<< HEAD
-=======
 #include "hex-common.h"
 #include "dma-queue.h"
->>>>>>> ggml-org/master
 #include "htp-ctx.h"
 #include "htp-ops.h"
 #include "htp-tensor.h"
@@ -33,9 +30,6 @@ struct get_rows_context {
     struct htp_ops_context * octx;
     const struct htp_get_rows_kernel_params * kparams;
     struct htp_get_rows_vtcm_layout vtcm_layout;
-<<<<<<< HEAD
-    uint8_t * vtcm_base;
-=======
     uint8_t    * vtcm_base;
     const void * src1_data;
     get_rows_read_index_fn_t    read_index;
@@ -49,10 +43,9 @@ struct get_rows_context {
     uint32_t src0_row_size;
     uint32_t dst_row_size;
     int idx_type;
->>>>>>> ggml-org/master
 };
 
-#define get_rows_preamble \
+#define get_rows_preamble                      \
     const uint32_t ne00 = octx->src[0]->ne[0]; \
     const uint32_t ne01 = octx->src[0]->ne[1]; \
     const uint32_t ne02 = octx->src[0]->ne[2]; \
@@ -82,142 +75,6 @@ struct get_rows_context {
                                                \
     const uint32_t nr = ne10 * ne11 * ne12;
 
-<<<<<<< HEAD
-#define GET_ROWS_THREAD_ST_FN(IDX_TYPE)                                                                                \
-static void get_rows_thread_st_##IDX_TYPE(unsigned int nth, unsigned int ith, void *data) {                            \
-    struct get_rows_context * grctx = (struct get_rows_context *)data;                                                 \
-    struct htp_ops_context * octx = grctx->octx;                                                                       \
-    const struct htp_get_rows_kernel_params * kparams = grctx->kparams;                                                \
-    get_rows_preamble;                                                                                                 \
-    const uint32_t dr  = kparams->tasks_per_thread;                                                                    \
-    const uint32_t ir0 = dr * ith;                                                                                     \
-    if (ir0 >= kparams->total_tasks) {                                                                                 \
-        return;                                                                                                        \
-    }                                                                                                                  \
-    const uint32_t ir1 = MIN(ir0 + dr, kparams->total_tasks);                                                          \
-    const uint32_t row_size_bytes = htp_tensor_get_row_size(octx->src[0]->type, ne00);                                 \
-    dma_queue * dma_queue = octx->ctx->dma[ith];                                                                       \
-    for (uint32_t i = ir0; i < ir1; ++i) {                                                                             \
-        const uint32_t i12 = fastdiv(i, &kparams->div_ne10_ne11);                                                      \
-        const uint32_t rem = i - i12 * ne11 * ne10;                                                                    \
-        const uint32_t i11 = fastdiv(rem, &kparams->div_ne10);                                                         \
-        const uint32_t i10 = rem - i11 * ne10;                                                                         \
-        const IDX_TYPE * src1_ptr = (const IDX_TYPE *)(octx->src[1]->data + i10*nb10 + i11*nb11 + i12*nb12);           \
-        const uint32_t i01 = (uint32_t)*src1_ptr;                                                                      \
-        assert(i01 < ne01);                                                                                            \
-        const uint32_t q02 = fastdiv(i11, &kparams->div_ne02);                                                         \
-        const uint32_t i02 = i11 - q02 * ne02;                                                                         \
-        const uint32_t q03 = fastdiv(i12, &kparams->div_ne03);                                                         \
-        const uint32_t i03 = i12 - q03 * ne03;                                                                         \
-        const uintptr_t src0_ptr = octx->src[0]->data + i01*nb01 + i02*nb02 + i03*nb03;                                \
-        const uintptr_t dst_ptr  = octx->dst->data    + i10*nb1  + i11*nb2  + i12*nb3;                                 \
-        while (!dma_queue_push(dma_queue, dma_make_ptr((void *)dst_ptr, (const void *)src0_ptr), nb1, nb01,            \
-                               row_size_bytes, 1)) {                                                                   \
-            dma_queue_pop(dma_queue);                                                                                  \
-        }                                                                                                              \
-    }                                                                                                                  \
-    dma_queue_flush(dma_queue);                                                                                        \
-}
-
-GET_ROWS_THREAD_ST_FN(int32_t)
-GET_ROWS_THREAD_ST_FN(int64_t)
-
-#define GET_ROWS_THREAD_DT_FN(TYPE_NAME, SRC0_SIZE_EXPR, IDX_TYPE, COMPUTE_EXPR)                                       \
-static void get_rows_thread_##TYPE_NAME##_##IDX_TYPE(unsigned int nth, unsigned int ith, void *data) {                 \
-    struct get_rows_context * grctx = (struct get_rows_context *)data;                                                 \
-    struct htp_ops_context * octx = grctx->octx;                                                                       \
-    const struct htp_get_rows_kernel_params * kparams = grctx->kparams;                                                \
-    get_rows_preamble;                                                                                                 \
-    struct htp_thread_trace * tr = &octx->ctx->trace[ith];                                                             \
-    const uint32_t dr  = kparams->tasks_per_thread;                                                                    \
-    const uint32_t ir0 = dr * ith;                                                                                     \
-    if (ir0 >= kparams->total_tasks) {                                                                                 \
-        return;                                                                                                        \
-    }                                                                                                                  \
-    const uint32_t ir1 = MIN(ir0 + dr, kparams->total_tasks);                                                          \
-    const uint32_t chunks_per_row = kparams->chunks_per_row;                                                           \
-    const uint32_t chunk_size     = kparams->chunk_size;                                                               \
-    dma_queue * dma_queue = octx->ctx->dma[ith];                                                                       \
-    const struct htp_get_rows_vtcm_layout * vtcm_layout = &grctx->vtcm_layout;                                         \
-    uint8_t * vtcm_src0 = grctx->vtcm_base + vtcm_layout->off_src0 + ith * vtcm_layout->src0_bytes_per_thread;         \
-    uint8_t * vtcm_dst  = grctx->vtcm_base + vtcm_layout->off_dst  + ith * vtcm_layout->dst_bytes_per_thread;          \
-    for (uint32_t step = 0, spad_idx = 0; step < ir1 - ir0 && spad_idx < 2; ++step, spad_idx++) {                      \
-        const uint32_t i = ir0 + step;                                                                                 \
-        const uint32_t row_idx   = fastdiv(i, &kparams->div_chunks_per_row);                                           \
-        const uint32_t chunk_idx = i - row_idx * chunks_per_row;                                                       \
-        const uint32_t i12 = fastdiv(row_idx, &kparams->div_ne10_ne11);                                                \
-        const uint32_t rem = row_idx - i12 * ne11 * ne10;                                                              \
-        const uint32_t i11 = fastdiv(rem, &kparams->div_ne10);                                                         \
-        const uint32_t i10 = rem - i11 * ne10;                                                                         \
-        const IDX_TYPE * src1_ptr = (const IDX_TYPE *)(octx->src[1]->data + i10*nb10 + i11*nb11 + i12*nb12);           \
-        const uint32_t i01 = (uint32_t)*src1_ptr;                                                                      \
-        assert(i01 < ne01);                                                                                            \
-        const uint32_t q02 = fastdiv(i11, &kparams->div_ne02);                                                         \
-        const uint32_t i02 = i11 - q02 * ne02;                                                                         \
-        const uint32_t q03 = fastdiv(i12, &kparams->div_ne03);                                                         \
-        const uint32_t i03 = i12 - q03 * ne03;                                                                         \
-        const uint32_t offset = chunk_idx * chunk_size;                                                                \
-        const uint32_t cur_elems = (offset < ne00) ? MIN(chunk_size, ne00 - offset) : 0;                               \
-        const uint32_t cur_src0_bytes = SRC0_SIZE_EXPR(cur_elems);                                                     \
-        const uint32_t cur_dst_bytes  = cur_elems * sizeof(float);                                                     \
-        const uintptr_t src0_ptr = octx->src[0]->data + i01*nb01 + i02*nb02 + i03*nb03 + SRC0_SIZE_EXPR(offset);       \
-        dma_queue_push(dma_queue,                                                                                      \
-                       dma_make_ptr((void *)(uintptr_t)octx->dst->data,                                                \
-                                    vtcm_dst + spad_idx * vtcm_layout->dst_spad_half_size),                            \
-                       cur_dst_bytes, vtcm_layout->dst_spad_half_size, cur_dst_bytes, 0);                              \
-        dma_queue_push(dma_queue,                                                                                      \
-                       dma_make_ptr((void *)(vtcm_src0 + spad_idx * vtcm_layout->src0_spad_half_size),                 \
-                                    (const void *)src0_ptr),                                                           \
-                       vtcm_layout->src0_spad_half_size, cur_src0_bytes, cur_src0_bytes, 1);                           \
-    }                                                                                                                  \
-    for (uint32_t step = 0; step < ir1 - ir0; ++step) {                                                                \
-        const uint32_t i = ir0 + step;                                                                                 \
-        void * dst_spad = (void *) dma_queue_pop(dma_queue).src;                                                       \
-        void * src_spad = (void *) dma_queue_pop(dma_queue).dst;                                                       \
-        const uint32_t row_idx   = fastdiv(i, &kparams->div_chunks_per_row);                                           \
-        const uint32_t chunk_idx = i - row_idx * chunks_per_row;                                                       \
-        const uint32_t i12 = fastdiv(row_idx, &kparams->div_ne10_ne11);                                                \
-        const uint32_t rem = row_idx - i12 * ne11 * ne10;                                                              \
-        const uint32_t i11 = fastdiv(rem, &kparams->div_ne10);                                                         \
-        const uint32_t i10 = rem - i11 * ne10;                                                                         \
-        const uint32_t offset = chunk_idx * chunk_size;                                                                \
-        const uint32_t cur_elems = (offset < ne00) ? MIN(chunk_size, ne00 - offset) : 0;                               \
-        const uint32_t cur_dst_bytes  = cur_elems * sizeof(float);                                                     \
-        htp_trace_event_start(tr, HTP_TRACE_EVT_HVX_COMP, i);                                                          \
-        COMPUTE_EXPR;                                                                                                  \
-        htp_trace_event_stop(tr, HTP_TRACE_EVT_HVX_COMP, i);                                                           \
-        const uintptr_t dst_ptr  = octx->dst->data + i10*nb1 + i11*nb2 + i12*nb3 + offset * sizeof(float);             \
-        dma_queue_push(dma_queue,                                                                                      \
-                       dma_make_ptr((void *)dst_ptr, (const void *)dst_spad),                                          \
-                       cur_dst_bytes, vtcm_layout->dst_spad_half_size, cur_dst_bytes, 1);                              \
-        const uint32_t next_step = step + 2;                                                                           \
-        if (next_step < ir1 - ir0) {                                                                                   \
-            const uint32_t pi = ir0 + next_step;                                                                       \
-            const uint32_t prow_idx   = fastdiv(pi, &kparams->div_chunks_per_row);                                     \
-            const uint32_t pchunk_idx = pi - prow_idx * chunks_per_row;                                                \
-            const uint32_t pi12 = fastdiv(prow_idx, &kparams->div_ne10_ne11);                                          \
-            const uint32_t prem = prow_idx - pi12 * ne11 * ne10;                                                       \
-            const uint32_t pi11 = fastdiv(prem, &kparams->div_ne10);                                                   \
-            const uint32_t pi10 = prem - pi11 * ne10;                                                                  \
-            const IDX_TYPE * psrc1_ptr = (const IDX_TYPE *)(octx->src[1]->data + pi10*nb10 + pi11*nb11 + pi12*nb12);   \
-            const uint32_t pi01 = (uint32_t)*psrc1_ptr;                                                                \
-            assert(pi01 < ne01);                                                                                       \
-            const uint32_t pq02 = fastdiv(pi11, &kparams->div_ne02);                                                   \
-            const uint32_t pi02 = pi11 - pq02 * ne02;                                                                  \
-            const uint32_t pq03 = fastdiv(pi12, &kparams->div_ne03);                                                   \
-            const uint32_t pi03 = pi12 - pq03 * ne03;                                                                  \
-            const uint32_t poffset = pchunk_idx * chunk_size;                                                          \
-            const uint32_t pcur_elems = (poffset < ne00) ? MIN(chunk_size, ne00 - poffset) : 0;                        \
-            const uint32_t pcur_src0_bytes = SRC0_SIZE_EXPR(pcur_elems);                                               \
-            const uintptr_t psrc0_ptr =                                                                                \
-                octx->src[0]->data + pi01*nb01 + pi02*nb02 + pi03*nb03 + SRC0_SIZE_EXPR(poffset);                      \
-            dma_queue_push(dma_queue,                                                                                  \
-                           dma_make_ptr((void *)src_spad, (const void *)psrc0_ptr),                                    \
-                           vtcm_layout->src0_spad_half_size, pcur_src0_bytes, pcur_src0_bytes, 1);                     \
-        }                                                                                                              \
-    }                                                                                                                  \
-    dma_queue_flush(dma_queue);                                                                                        \
-=======
 static uint32_t get_rows_read_index_ddr(
     const void * src1,
     uint32_t idx,
@@ -236,7 +93,6 @@ static __attribute__((noinline)) uint32_t get_rows_read_index_vtcm(
     const HVX_Vector v = hvx_vmem((const uint8_t *) src1 + off); // off & ~127u in HW
     // vextract is normally slow, but here it avoids an HVX->L2 store and L1D miss
     return (uint32_t) Q6_R_vextract_VR(v, off);
->>>>>>> ggml-org/master
 }
 
 static void get_rows_thread_sametype(unsigned int nth, unsigned int ith, void * data) {
@@ -539,12 +395,6 @@ int op_get_rows(struct htp_ops_context * octx) {
         return HTP_STATUS_NO_SUPPORT;
     }
 
-<<<<<<< HEAD
-    if (octx->flags & HTP_OPFLAGS_SKIP_COMPUTE) {
-        return HTP_STATUS_OK;
-    }
-
-=======
     const struct htp_tensor * dst = octx->dst;
     const uint32_t total_tasks    = kparams->total_tasks;
     const uint32_t dst_row_size   = (kparams->kernel_type == HTP_GET_ROWS_KERNEL_SAMETYPE) ? src0_row_size : ne00 * sizeof(float);
@@ -570,16 +420,10 @@ int op_get_rows(struct htp_ops_context * octx) {
 
     const uint32_t n_threads = octx->n_threads;
 
->>>>>>> ggml-org/master
     struct get_rows_context grctx;
     grctx.octx = octx;
     grctx.kparams = kparams;
     grctx.vtcm_base = (uint8_t *)octx->ctx->vtcm_base;
-<<<<<<< HEAD
-
-    const uint32_t ne00 = octx->src[0]->ne[0];
-    htp_get_rows_vtcm_layout_build(&grctx.vtcm_layout, octx->src[0]->type, ne00, kparams->n_threads);
-=======
     grctx.compute_flat = NULL;
     grctx.compute_tiled = NULL;
     grctx.task_start = task_start;
@@ -592,7 +436,6 @@ int op_get_rows(struct htp_ops_context * octx) {
     grctx.idx_type      = octx->src[1]->type;
 
     htp_get_rows_vtcm_layout_build(&grctx.vtcm_layout, kparams->kernel_type, octx->src[0]->type, ne00, total_tasks, grctx.idx_type, n_threads);
->>>>>>> ggml-org/master
 
     if (grctx.vtcm_layout.total_bytes > octx->ctx->vtcm_size) {
         FARF(ERROR, "get-rows: VTCM reservation %zu is too small, needed %zu\n",
@@ -600,9 +443,6 @@ int op_get_rows(struct htp_ops_context * octx) {
         return HTP_STATUS_INVAL_PARAMS;
     }
 
-<<<<<<< HEAD
-    work_queue_run(octx->ctx->work_queue, q_func, &grctx, kparams->n_threads);
-=======
     work_queue_func_t q_func = NULL;
     switch (kparams->kernel_type) {
         case HTP_GET_ROWS_KERNEL_SAMETYPE:
@@ -666,6 +506,5 @@ int op_get_rows(struct htp_ops_context * octx) {
          kparams->kernel_type, n_threads);
 
     work_queue_run(octx->ctx->work_queue, q_func, &grctx, n_threads);
->>>>>>> ggml-org/master
     return HTP_STATUS_OK;
 }

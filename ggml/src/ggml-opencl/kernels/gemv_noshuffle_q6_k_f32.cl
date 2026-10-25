@@ -298,8 +298,6 @@ kernel void kernel_gemv_noshuffle_q6_K_f32(
         if (gid * 2 + 1 < ne01) dst[gid * 2 + 1] = total_sum.s1;
     }
 }
-<<<<<<< HEAD
-=======
 
 // Multi-column (N=3) q6_K decode GEMV for the spec/MTP verify batch. Same idea
 // as the q4_K mc3: stay on the efficient GEMV path (subgroup broadcast, no
@@ -415,4 +413,3 @@ kernel void kernel_gemv_noshuffle_q6_K_f32_mc3(
         }
     }
 }
->>>>>>> ggml-org/master

@@ -31,8 +31,6 @@ export interface ToolGroup {
 	serverId?: string;
 	tools: ToolEntry[];
 }
-<<<<<<< HEAD
-=======
 
 export interface WriteFileMeta {
 	/** Undefined until the call streams a path; content renders without it. */
@@ -83,4 +81,3 @@ export interface EditFileTitleMeta {
 	editsApplied?: number;
 	errorMessage?: string;
 }
->>>>>>> ggml-org/master

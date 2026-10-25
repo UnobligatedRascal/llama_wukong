@@ -978,7 +978,7 @@ static void test_all(const std::string & title, std::function<void(const TestCas
             "additionalProperties": false
         })""",
         R"""(
-            root ::= "{" space  space "}"
+            root ::= "{" space "}"
             space ::= | " " | "\n"{1,2} [ \t]{0,20}
         )"""
     });

@@ -6,6 +6,7 @@
 #include "chat.h"
 #include "mtmd.h"
 #include "mtmd-helper.h"
+#include "subproc.h"
 
 #include "json.h"
 
@@ -13,11 +14,8 @@
 #include <chrono>
 #include <condition_variable>
 #include <cinttypes>
-<<<<<<< HEAD
-=======
 #include <cstdio>
 #include <filesystem>
->>>>>>> ggml-org/master
 #include <functional>
 #include <mutex>
 #include <queue>
@@ -675,8 +673,6 @@ struct server_pipe {
         return true;
     }
 };
-<<<<<<< HEAD
-=======
 
 // a child server writes its state commands to stdout and its logs to stderr
 enum server_subproc_stream {
@@ -729,4 +725,3 @@ private:
     intptr_t out_handles[SERVER_SUBPROC_STREAMS] = { -1, -1 }; // fd on POSIX, HANDLE on Windows; taken lazily from sproc
     bool     out_closed [SERVER_SUBPROC_STREAMS] = { false, false };
 };
->>>>>>> ggml-org/master

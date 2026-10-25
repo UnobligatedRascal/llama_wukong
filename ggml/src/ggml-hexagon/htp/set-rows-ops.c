@@ -18,6 +18,7 @@
 #define GGML_COMMON_DECL_C
 #include "ggml-common.h"
 
+#include "hex-common.h"
 #include "htp-ctx.h"
 #include "htp-ops.h"
 #include "htp-tensor.h"
@@ -58,6 +59,9 @@ struct set_rows_context {
     const struct htp_set_rows_kernel_params * kparams;
     struct htp_set_rows_vtcm_layout vtcm_layout;
     uint8_t * vtcm_base;
+    uint32_t task_start;
+    uint32_t tasks;
+    uint32_t tasks_per_thread;
 };
 
 #define SET_ROWS_THREAD_DMA_FN(TYPE_NAME, IDX_TYPE, COMPUTE_EXPR)                                                \
@@ -67,18 +71,13 @@ static void set_rows_thread_dma_##TYPE_NAME##_##IDX_TYPE(unsigned int nth, unsig
     const struct htp_set_rows_kernel_params * kparams = srctx->kparams;                                          \
     set_rows_preamble;                                                                                           \
     struct htp_thread_trace * tr = &octx->ctx->trace[ith];                                                       \
-    const uint32_t dr  = kparams->tasks_per_thread;                                                              \
-    const uint32_t ir0 = dr * ith;                                                                               \
-    if (ir0 >= kparams->total_tasks) {                                                                           \
+    const uint32_t dr  = srctx->tasks_per_thread;                                                                \
+    const uint32_t ir0 = srctx->task_start + dr * ith;                                                           \
+    if (ir0 >= srctx->task_start + srctx->tasks) {                                                               \
         return;                                                                                                  \
     }                                                                                                            \
-<<<<<<< HEAD
-    const uint32_t ir1 = MIN(ir0 + dr, kparams->total_tasks);                                                    \
-    dma_queue * dma_queue = octx->ctx->dma[ith];                                                                 \
-=======
     const uint32_t ir1 = MIN(ir0 + dr, srctx->task_start + srctx->tasks);                                        \
     dma_queue * dma_q = octx->ctx->dma[ith];                                                                     \
->>>>>>> ggml-org/master
     const struct htp_set_rows_vtcm_layout * vtcm_layout = &srctx->vtcm_layout;                                   \
     uint8_t * vtcm_src0 = VTCM_LAYOUT_PTR(uint8_t, srctx->vtcm_base, vtcm_layout->off_src0) +                    \
                           ith * vtcm_layout->src0_bytes_per_thread;                                              \
@@ -195,16 +194,6 @@ int op_set_rows(struct htp_ops_context * octx) {
         return HTP_STATUS_NO_SUPPORT;
     }
 
-<<<<<<< HEAD
-    if (octx->dst->type != HTP_TYPE_F32 && octx->dst->type != HTP_TYPE_F16 && octx->dst->type != HTP_TYPE_Q8_0) {
-        return HTP_STATUS_NO_SUPPORT;
-    }
-
-    if (octx->src[1]->type != HTP_TYPE_I32 && octx->src[1]->type != HTP_TYPE_I64) {
-        return HTP_STATUS_NO_SUPPORT;
-    }
-
-=======
     const struct htp_tensor * dst = octx->dst;
     const uint32_t total_tasks    = kparams->total_tasks;
 
@@ -228,15 +217,17 @@ int op_set_rows(struct htp_ops_context * octx) {
 
     const uint32_t n_threads = octx->n_threads;
 
->>>>>>> ggml-org/master
     // l2fetch the src1 (indices) tensor in the main thread
     hex_l2fetch_block((const void *)octx->src[1]->data, octx->src[1]->ne[3] * octx->src[1]->nb[3]);
 
     struct set_rows_context srctx;
     srctx.octx = octx;
     srctx.kparams = kparams;
+    srctx.task_start = task_start;
+    srctx.tasks = tasks;
+    srctx.tasks_per_thread = fastdiv(tasks + n_threads - 1, &octx->n_threads_div);
 
-    htp_set_rows_vtcm_layout_build(&srctx.vtcm_layout, octx->dst->type, ne00, kparams->n_threads);
+    htp_set_rows_vtcm_layout_build(&srctx.vtcm_layout, octx->dst->type, ne00, n_threads);
     srctx.vtcm_base = (uint8_t *)octx->ctx->vtcm_base;
 
     work_queue_func_t q_func = NULL;
@@ -249,7 +240,15 @@ int op_set_rows(struct htp_ops_context * octx) {
         default:            return HTP_STATUS_NO_SUPPORT;
     }
 
-    work_queue_run(octx->ctx->work_queue, q_func, &srctx, kparams->n_threads);
+    FARF(HIGH, "set-rows: (%ux%ux%ux%u) x (%ux%ux%ux%u) -> (%ux%ux%ux%u) : src0-vtcm-size %zu dst-vtcm-size %zu n-threads %d\n",
+         octx->src[0]->ne[0], octx->src[0]->ne[1], octx->src[0]->ne[2], octx->src[0]->ne[3],
+         octx->src[1]->ne[0], octx->src[1]->ne[1], octx->src[1]->ne[2], octx->src[1]->ne[3],
+         octx->dst->ne[0], octx->dst->ne[1], octx->dst->ne[2], octx->dst->ne[3],
+         srctx.vtcm_layout.src0_bytes_per_thread * n_threads,
+         srctx.vtcm_layout.dst_bytes_per_thread  * n_threads,
+         n_threads);
+
+    work_queue_run(octx->ctx->work_queue, q_func, &srctx, n_threads);
 
     return HTP_STATUS_OK;
 }

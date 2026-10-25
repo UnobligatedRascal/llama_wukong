@@ -48,11 +48,6 @@ struct htp_fa_kernel_params {
     float    logit_softcap;
     uint32_t vtcm_size;
 
-<<<<<<< HEAD
-    uint32_t qrows;
-    uint32_t qrows_per_thread;
-=======
->>>>>>> ggml-org/master
     float    m0;
     float    m1;
     uint32_t n_head_log2;

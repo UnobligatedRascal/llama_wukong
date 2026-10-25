@@ -2,10 +2,9 @@
 #define HTP_TENSOR_H
 
 #include <stdint.h>
+#include <stdbool.h>
 #include "htp-ops.h"
 #include "hex-bitmap.h"
-<<<<<<< HEAD
-=======
 #include "hex-common.h"
 #include "hex-fastdiv.h"
 
@@ -38,15 +37,11 @@ struct htp_tensor_mdev_range {
     uint32_t start;
     uint32_t count;
 };
->>>>>>> ggml-org/master
 
 static inline bool htp_tensor_is_extended(const struct htp_tensor * t) {
     return t && (t->data >> 32) != 0;
 }
 
-<<<<<<< HEAD
-static inline uint32_t htp_tensor_get_row_size(int type, uint32_t ne00) {
-=======
 static inline bool htp_tensor_is_contiguous(const struct htp_tensor * t, uint32_t type_size) {
     uint32_t next_nb = type_size;
     if (t->ne[0] != 1 && t->nb[0] != next_nb) {
@@ -144,7 +139,6 @@ static inline struct htp_tensor_mdev_range htp_tensor_mdev_partition(uint32_t to
 }
 
 static inline uint32_t htp_tensor_get_tile_size(int type) {
->>>>>>> ggml-org/master
     switch (type) {
         case HTP_TYPE_Q4_0:   return HTP_TENSOR_TILE_SIZE_Q4_0;
         case HTP_TYPE_IQ4_NL: return HTP_TENSOR_TILE_SIZE_IQ4_NL;
@@ -163,11 +157,6 @@ static inline uint32_t htp_tensor_get_tile_size(int type) {
     }
 }
 
-<<<<<<< HEAD
-struct htp_context;
-void htp_tensor_flush_all(struct htp_context * ctx, const struct htp_tensor * const * tensors, uint32_t n);
-void htp_tensor_dirty_all(struct htp_context * ctx, const struct htp_tensor * const * tensors, uint32_t n);
-=======
 static inline uint32_t htp_tensor_get_tile_k(int type) {
     switch (type) {
         case HTP_TYPE_Q1_0: return HTP_TENSOR_TILE_K_Q1_0;
@@ -206,6 +195,5 @@ static inline uint32_t htp_tensor_get_row_size(int type, uint32_t ne00) {
         default:              return 0;
     }
 }
->>>>>>> ggml-org/master
 
 #endif // HTP_TENSOR_H

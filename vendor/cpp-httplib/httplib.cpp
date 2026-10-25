@@ -981,17 +981,42 @@ bool write_websocket_frame(Stream &strm, ws::Opcode opcode,
 namespace ws {
 namespace impl {
 
-bool read_websocket_frame(Stream &strm, Opcode &opcode,
-                                 std::string &payload, bool &fin,
-                                 bool expect_masked, size_t max_len) {
-  // Read first 2 bytes
+// Read exactly `size` bytes. Stream::read may return less than asked for -- it
+// hands back whatever its buffer already holds -- so every multi-byte field has
+// to loop. Reading a 2-byte header with a single read() fails whenever the
+// header straddles the read buffer's boundary.
+//
+// Timeout is reported only when nothing at all was consumed. Once a byte has
+// been taken the stream sits mid-field and cannot be resumed, so a timeout
+// there is a failure like any other. (When read() fails it always records why,
+// so the error belongs to this call and not to an earlier one.)
+FrameRead read_exact(Stream &strm, void *buf, size_t size) {
+  auto p = static_cast<char *>(buf);
+  size_t total = 0;
+  while (total < size) {
+    auto n = strm.read(p + total, size - total);
+    if (n <= 0) {
+      auto timed_out = total == 0 && strm.get_error() == Error::Timeout;
+      return timed_out ? FrameRead::Timeout : FrameRead::Fail;
+    }
+    total += static_cast<size_t>(n);
+  }
+  return FrameRead::Ok;
+}
+
+FrameRead read_websocket_frame(Stream &strm, Opcode &opcode,
+                                      std::string &payload, bool &fin,
+                                      bool expect_masked, size_t max_len) {
+  // Read first 2 bytes. This is the only read that may report a timeout: it
+  // sits on a frame boundary, where nothing has been consumed yet.
   uint8_t header[2];
-  if (strm.read(reinterpret_cast<char *>(header), 2) != 2) { return false; }
+  FrameRead first = read_exact(strm, header, 2);
+  if (first != FrameRead::Ok) { return first; }
 
   fin = (header[0] & 0x80) != 0;
 
   // RSV1, RSV2, RSV3 must be 0 when no extension is negotiated
-  if (header[0] & 0x70) { return false; }
+  if (header[0] & 0x70) { return FrameRead::Fail; }
 
   opcode = static_cast<Opcode>(header[0] & 0x0F);
   bool masked = (header[1] & 0x80) != 0;
@@ -1001,56 +1026,43 @@ bool read_websocket_frame(Stream &strm, Opcode &opcode,
   // MUST have a payload length of 125 bytes or less
   bool is_control = (static_cast<uint8_t>(opcode) & 0x08) != 0;
   if (is_control) {
-    if (!fin) { return false; }
-    if (payload_len > 125) { return false; }
+    if (!fin) { return FrameRead::Fail; }
+    if (payload_len > 125) { return FrameRead::Fail; }
   }
 
-  if (masked != expect_masked) { return false; }
+  if (masked != expect_masked) { return FrameRead::Fail; }
 
   // Extended payload length
   if (payload_len == 126) {
     uint8_t ext[2];
-    if (strm.read(reinterpret_cast<char *>(ext), 2) != 2) { return false; }
+    if (read_exact(strm, ext, 2) != FrameRead::Ok) { return FrameRead::Fail; }
     payload_len = (static_cast<uint64_t>(ext[0]) << 8) | ext[1];
   } else if (payload_len == 127) {
     uint8_t ext[8];
-    if (strm.read(reinterpret_cast<char *>(ext), 8) != 8) { return false; }
+    if (read_exact(strm, ext, 8) != FrameRead::Ok) { return FrameRead::Fail; }
     // RFC 6455 Section 5.2: the most significant bit MUST be 0
-    if (ext[0] & 0x80) { return false; }
+    if (ext[0] & 0x80) { return FrameRead::Fail; }
     payload_len = 0;
     for (int i = 0; i < 8; i++) {
       payload_len = (payload_len << 8) | ext[i];
     }
   }
 
-<<<<<<< HEAD
-  if (payload_len > max_len) { return false; }
-=======
   // A max_len of 0 means no limit, as payload_max_length does, and a length
   // size_t cannot hold (32-bit builds) is refused either way.
   if ((max_len > 0 && payload_len > max_len) ||
       !detail::fits_in_size_t(payload_len)) {
     return FrameRead::Fail;
   }
->>>>>>> ggml-org/master
 
   // Read mask key if present
   uint8_t mask_key[4] = {0};
   if (masked) {
-    if (strm.read(reinterpret_cast<char *>(mask_key), 4) != 4) { return false; }
+    if (read_exact(strm, mask_key, 4) != FrameRead::Ok) {
+      return FrameRead::Fail;
+    }
   }
 
-<<<<<<< HEAD
-  // Read payload
-  payload.resize(static_cast<size_t>(payload_len));
-  if (payload_len > 0) {
-    size_t total_read = 0;
-    while (total_read < payload_len) {
-      auto n = strm.read(&payload[total_read],
-                         static_cast<size_t>(payload_len - total_read));
-      if (n <= 0) { return false; }
-      total_read += static_cast<size_t>(n);
-=======
   // Grow the payload only as it arrives, since a header alone can announce
   // max_len bytes that never come.
   payload.clear();
@@ -1061,7 +1073,6 @@ bool read_websocket_frame(Stream &strm, Opcode &opcode,
     payload.resize(offset + n);
     if (read_exact(strm, &payload[offset], n) != FrameRead::Ok) {
       return FrameRead::Fail;
->>>>>>> ggml-org/master
     }
   }
 
@@ -1072,7 +1083,7 @@ bool read_websocket_frame(Stream &strm, Opcode &opcode,
     }
   }
 
-  return true;
+  return FrameRead::Ok;
 }
 
 // RFC 6455 §5.5.1, §7.4: a Close payload is empty, or a status code that may
@@ -1857,7 +1868,9 @@ ssize_t select_impl(socket_t sock, short events, time_t sec,
   pfd.events = events;
   pfd.revents = 0;
 
-  auto timeout = static_cast<int>(sec * 1000 + usec / 1000);
+  // A negative timeout waits forever, poll's own convention. 0 keeps meaning
+  // "return immediately", which callers here rely on to probe a socket.
+  auto timeout = sec < 0 ? -1 : static_cast<int>(sec * 1000 + usec / 1000);
 
   return handle_EINTR([&]() { return poll_wrapper(&pfd, 1, timeout); });
 }
@@ -1985,8 +1998,11 @@ private:
   bool ensure_readable();
 
   socket_t sock_;
-  time_t read_timeout_sec_;
-  time_t read_timeout_usec_;
+  // Atomic because ws::WebSocket::set_read_timeout() reaches this from another
+  // thread while a read is in flight -- that is the point of it, for a caller
+  // holding one connection and wanting control back to send on it.
+  std::atomic<time_t> read_timeout_sec_;
+  std::atomic<time_t> read_timeout_usec_;
   time_t write_timeout_sec_;
   time_t write_timeout_usec_;
   time_t max_timeout_msec_;
@@ -2395,12 +2411,10 @@ int getaddrinfo_with_timeout(const char *node, const char *service,
   // actually finish before letting the stack frame go. The trade-off is that
   // a wedged DNS server can hold this thread for the system resolver timeout
   // (~30s by default) past the caller's connection timeout.
-  struct gaicb request {};
+  struct gaicb request{};
   struct gaicb *requests[1] = {&request};
-  struct sigevent sevp {};
-  struct timespec timeout {
-    timeout_sec, 0
-  };
+  struct sigevent sevp{};
+  struct timespec timeout{timeout_sec, 0};
 
   request.ar_name = node;
   request.ar_service = service;
@@ -3112,8 +3126,21 @@ EncodingType encoding_type(const Request &req,
   return best;
 }
 
+// `content_type` is taken separately because a file-backed response has not
+// been given one yet when its coding has to be decided.
+EncodingType encoding_type(const Request &req, const Response &res,
+                                  const std::string &content_type) {
+  // The response already names a content coding of its own: a handler serving
+  // a body it encoded itself (pre-compressed static assets, say), or a mount
+  // point whose headers name the coding its files are stored in. Applying one
+  // on top of that would double-encode the body and append a second
+  // `Content-Encoding` field line.
+  if (res.has_header("Content-Encoding")) { return EncodingType::None; }
+  return encoding_type(req, content_type);
+}
+
 EncodingType encoding_type(const Request &req, const Response &res) {
-  return encoding_type(req, res.get_header_value("Content-Type"));
+  return encoding_type(req, res, res.get_header_value("Content-Type"));
 }
 
 std::unique_ptr<compressor> make_compressor(EncodingType type) {
@@ -3870,8 +3897,6 @@ bool is_chunked_transfer_encoding(const Headers &headers) {
   return case_ignore::equal(last_coding, "chunked");
 }
 
-<<<<<<< HEAD
-=======
 // RFC 9112 6.1: a message framed by Transfer-Encoding next to a Content-Length,
 // or in HTTP/1.0, leaves the connection unfit to carry another one.
 template <typename T> bool has_faulty_transfer_encoding(const T &msg) {
@@ -3890,7 +3915,6 @@ bool has_conflicting_content_length(const Headers &headers) {
          get_header_value_u64(headers, "Content-Length", 0, 0) > 0;
 }
 
->>>>>>> ggml-org/master
 template <typename T, typename U>
 bool prepare_content_receiver(T &x, int &status,
                               ContentReceiverWithProgress receiver,
@@ -4260,12 +4284,8 @@ void set_file_content_provider(Response &res,
         return true;
       });
 
-<<<<<<< HEAD
-  res.file_content_encoding_ = encoding;
-=======
   res.is_file_content_provider_ = true;
   res.content_coding_ = encoding;
->>>>>>> ggml-org/master
 }
 
 template <typename T, typename U>
@@ -4605,13 +4625,20 @@ bool parse_range_header(const std::string &s, Ranges &ranges) try {
 
       ssize_t first = -1;
       if (!lhs.empty()) {
-        ssize_t v;
-        auto res = detail::from_chars(lhs.data(), lhs.data() + lhs.size(), v);
-        if (res.ec == std::errc{}) { first = v; }
+        // Reject an overflowing first-byte-pos; treating it as absent (-1)
+        // would turn the range into a suffix range.
+        auto res =
+            detail::from_chars(lhs.data(), lhs.data() + lhs.size(), first);
+        if (res.ec != std::errc{}) {
+          all_valid_ranges = false;
+          return;
+        }
       }
 
       ssize_t last = -1;
       if (!rhs.empty()) {
+        // An overflowing last-byte-pos is past any content length, so keeping
+        // -1 ("remainder", RFC 9110 14.1.2) is correct here.
         ssize_t v;
         auto res = detail::from_chars(rhs.data(), rhs.data() + rhs.size(), v);
         if (res.ec == std::errc{}) { last = v; }
@@ -7428,18 +7455,9 @@ void Response::set_redirect(const std::string &url, int stat) {
 
 void Response::set_content(const char *s, size_t n,
                                   const std::string &content_type) {
-<<<<<<< HEAD
-  body.assign(s, n);
-
-  auto rng = headers.equal_range("Content-Type");
-  headers.erase(rng.first, rng.second);
-  set_header("Content-Type", content_type);
-  file_content_encoding_ = detail::EncodingType::None;
-=======
   body.assign(s, n); // Before the releaser runs; it may own `s`.
   detail::clear_content_provider(*this);
   detail::set_content_type(*this, content_type);
->>>>>>> ggml-org/master
 }
 
 void Response::set_content(const std::string &s,
@@ -7450,16 +7468,8 @@ void Response::set_content(const std::string &s,
 void Response::set_content(std::string &&s,
                                   const std::string &content_type) {
   body = std::move(s);
-<<<<<<< HEAD
-
-  auto rng = headers.equal_range("Content-Type");
-  headers.erase(rng.first, rng.second);
-  set_header("Content-Type", content_type);
-  file_content_encoding_ = detail::EncodingType::None;
-=======
   detail::clear_content_provider(*this);
   detail::set_content_type(*this, content_type);
->>>>>>> ggml-org/master
 }
 
 void Response::set_content_provider(
@@ -7471,11 +7481,6 @@ void Response::set_content_provider(
   content_length_ = in_length;
   if (in_length > 0) { content_provider_ = std::move(provider); }
   content_provider_resource_releaser_ = std::move(resource_releaser);
-<<<<<<< HEAD
-  is_chunked_content_provider_ = false;
-  file_content_encoding_ = detail::EncodingType::None;
-=======
->>>>>>> ggml-org/master
 }
 
 void Response::set_content_provider(
@@ -7486,11 +7491,6 @@ void Response::set_content_provider(
 
   content_provider_ = detail::ContentProviderAdapter(std::move(provider));
   content_provider_resource_releaser_ = std::move(resource_releaser);
-<<<<<<< HEAD
-  is_chunked_content_provider_ = false;
-  file_content_encoding_ = detail::EncodingType::None;
-=======
->>>>>>> ggml-org/master
 }
 
 void Response::set_chunked_content_provider(
@@ -7499,10 +7499,6 @@ void Response::set_chunked_content_provider(
   set_content_provider(content_type, std::move(provider),
                        std::move(resource_releaser));
   is_chunked_content_provider_ = true;
-<<<<<<< HEAD
-  file_content_encoding_ = detail::EncodingType::None;
-=======
->>>>>>> ggml-org/master
 }
 
 void Response::set_file_content(const std::string &path,
@@ -8584,12 +8580,19 @@ ssize_t WebSocketSSLStream::read(char *ptr, size_t size) {
         needs_readable || (err.code == tls::ErrorCode::SyscallError &&
                            WSAGetLastError() == WSAETIMEDOUT);
 #endif
-    if (!needs_readable && err.code != tls::ErrorCode::WantWrite) { return -1; }
+    if (!needs_readable && err.code != tls::ErrorCode::WantWrite) {
+      error_ = Error::Read;
+      return -1;
+    }
     if (!(needs_readable ? wait_readable() : wait_writable())) {
       error_ = Error::Timeout;
       return -1;
     }
   }
+  // Out of retries. Recording a reason matters: a caller that reads get_error()
+  // to tell a timeout from a close would otherwise see whatever the previous
+  // failure left behind (error_ is never cleared on success).
+  error_ = Error::Read;
   return -1;
 }
 
@@ -9281,9 +9284,10 @@ Server::write_content_with_provider(Stream &strm, const Request &req,
     }
   } else {
     if (res.is_chunked_content_provider_) {
-      auto type = detail::encoding_type(req, res);
-
-      auto compressor = detail::make_compressor(type);
+      // Use the coding `apply_ranges()` chose when it wrote the headers;
+      // re-negotiating here would disagree with them, e.g. once a handler's
+      // own Content-Encoding header suppresses the negotiation.
+      auto compressor = detail::make_compressor(res.content_coding_);
       if (!compressor) {
         compressor = detail::make_unique<detail::nocompressor>();
       }
@@ -9523,13 +9527,8 @@ bool Server::handle_file_request(Request &req, Response &res) {
               path, file_extension_and_mimetype_map_, default_file_mimetype_);
           auto encoding = detail::EncodingType::None;
           if (static_file_compression_) {
-<<<<<<< HEAD
-            content_type = content_type_of();
-            encoding = static_file_encoding(req, content_type, stat.size());
-=======
             encoding =
                 static_file_encoding(req, res, content_type, stat.size());
->>>>>>> ggml-org/master
           }
 
           // The ETag names the representation actually sent, so a client that
@@ -9941,8 +9940,10 @@ bool Server::dispatch_request(Request &req, Response &res,
 // the ETag, which has to name the representation actually sent, and
 // `apply_static_file_compression()` go through this, so the two cannot drift
 // apart.
-detail::EncodingType Server::static_file_encoding(
-    const Request &req, const std::string &content_type, size_t length) const {
+detail::EncodingType
+Server::static_file_encoding(const Request &req, const Response &res,
+                             const std::string &content_type,
+                             size_t length) const {
   if (!static_file_compression_) { return detail::EncodingType::None; }
 
   // Nothing to compress, and an empty file already answers with
@@ -9967,14 +9968,14 @@ detail::EncodingType Server::static_file_encoding(
     return detail::EncodingType::None;
   }
 
-  return detail::encoding_type(req, content_type);
+  return detail::encoding_type(req, res, content_type);
 }
 
 // Compresses a file-backed content provider into `res.body`. Returns false when
 // the response is left untouched.
 bool Server::apply_static_file_compression(const Request &req,
                                                   Response &res) const {
-  auto type = res.file_content_encoding_;
+  auto type = res.content_coding_;
   if (type == detail::EncodingType::None || !res.content_provider_) {
     return false;
   }
@@ -9995,13 +9996,7 @@ bool Server::apply_static_file_compression(const Request &req,
 
   // The provider was consumed in full, so its releaser hears about a success.
   res.content_provider_success_ = true;
-<<<<<<< HEAD
-  res.content_provider_ = nullptr;
-  res.content_length_ = 0;
-  res.file_content_encoding_ = detail::EncodingType::None;
-=======
   detail::clear_content_provider(res);
->>>>>>> ggml-org/master
 
   res.set_header("Content-Encoding", detail::encoding_name(type));
   res.set_header("Vary", "Accept-Encoding");
@@ -10042,27 +10037,6 @@ void Server::apply_ranges(const Request &req, Response &res,
       auto offset_and_length = detail::get_range_offset_and_length(
           req.ranges[0], res.content_length_);
 
-<<<<<<< HEAD
-        length = offset_and_length.second;
-
-        auto content_range = detail::make_content_range_header_field(
-            offset_and_length, res.content_length_);
-        res.set_header("Content-Range", content_range);
-      } else {
-        length = detail::get_multipart_ranges_data_length(
-            req, boundary, content_type, res.content_length_);
-      }
-      res.set_header("Content-Length", std::to_string(length));
-    } else {
-      if (res.content_provider_) {
-        if (res.is_chunked_content_provider_) {
-          res.set_header("Transfer-Encoding", "chunked");
-          if (type != detail::EncodingType::None) {
-            res.set_header("Content-Encoding", detail::encoding_name(type));
-            res.set_header("Vary", "Accept-Encoding");
-          }
-        }
-=======
       auto content_range = detail::make_content_range_header_field(
           offset_and_length, res.content_length_);
       res.set_header("Content-Range", content_range);
@@ -10071,7 +10045,6 @@ void Server::apply_ranges(const Request &req, Response &res,
       if (type != detail::EncodingType::None) {
         res.set_header("Content-Encoding", detail::encoding_name(type));
         res.set_header("Vary", "Accept-Encoding");
->>>>>>> ggml-org/master
       }
     }
   } else {
@@ -10240,18 +10213,6 @@ Server::process_request(Stream &strm, const std::string &remote_addr,
   }
   strm.set_max_timeout(0);
 
-<<<<<<< HEAD
-  // RFC 9112 §6.3: Reject requests whose framing is ambiguous, which would
-  // otherwise let an intermediary and this parser disagree on where the body
-  // ends and enable request smuggling. Two cases: a non-zero Content-Length
-  // alongside any Transfer-Encoding (Content-Length: 0 is tolerated for
-  // compatibility with existing clients), and a Transfer-Encoding whose final
-  // coding is not chunked, which leaves the body length undeterminable. The
-  // latter must not fall through to the "no body" path, or the body bytes are
-  // parsed as the next request on a persistent connection.
-  if (req.has_header("Transfer-Encoding") &&
-      (req.get_header_value_u64("Content-Length") > 0 ||
-=======
   // RFC 9112 §6.3: Reject requests whose framing is invalid or ambiguous,
   // which would otherwise let an intermediary and this parser disagree on
   // where the body ends and enable request smuggling. Three cases: a
@@ -10269,7 +10230,6 @@ Server::process_request(Stream &strm, const std::string &remote_addr,
   if (is_invalid_content_length ||
       detail::has_conflicting_content_length(req.headers) ||
       (req.has_header("Transfer-Encoding") &&
->>>>>>> ggml-org/master
        !detail::is_chunked_transfer_encoding(req.headers))) {
     connection_closed = true;
     res.status = StatusCode::BadRequest_400;
@@ -10471,7 +10431,7 @@ Server::process_request(Stream &strm, const std::string &remote_addr,
             auto ws_strm =
                 std::unique_ptr<Stream>(new detail::WebSocketSSLStream(
                     strm.socket(), const_cast<tls::session_t>(req.ssl),
-                    CPPHTTPLIB_WEBSOCKET_READ_TIMEOUT_SECOND, 0,
+                    CPPHTTPLIB_WEBSOCKET_SERVER_READ_TIMEOUT_SECOND, 0,
                     write_timeout_sec_, write_timeout_usec_));
             ws::WebSocket ws(std::move(ws_strm), req, true,
                              websocket_ping_interval_sec_,
@@ -10481,7 +10441,8 @@ Server::process_request(Stream &strm, const std::string &remote_addr,
           }
 #endif
           // Use WebSocket-specific read timeout instead of HTTP timeout
-          strm.set_read_timeout(CPPHTTPLIB_WEBSOCKET_READ_TIMEOUT_SECOND, 0);
+          strm.set_read_timeout(CPPHTTPLIB_WEBSOCKET_SERVER_READ_TIMEOUT_SECOND,
+                                0);
           ws::WebSocket ws(strm, req, true, websocket_ping_interval_sec_,
                            websocket_max_missed_pongs_);
           entry.handler(req, ws);
@@ -10549,7 +10510,7 @@ Server::process_request(Stream &strm, const std::string &remote_addr,
 
         detail::set_file_content_provider(
             res, mm, content_type,
-            static_file_encoding(req, content_type, mm->size()));
+            static_file_encoding(req, res, content_type, mm->size()));
       }
     }
 
@@ -10944,8 +10905,12 @@ Result ClientImpl::send_(Request &&req) {
 void ClientImpl::prepare_default_headers(Request &r, bool for_stream,
                                                 const std::string &ct) {
   (void)for_stream;
-  for (const auto &header : default_headers_) {
-    if (!r.has_header(header.first)) { r.headers.insert(header); }
+  // Default headers are meant for the origin and may carry its credentials, so
+  // keep them off the CONNECT request the proxy reads.
+  if (r.method != "CONNECT") {
+    for (const auto &header : default_headers_) {
+      if (!r.has_header(header.first)) { r.headers.insert(header); }
+    }
   }
 
   // RFC 9110 5.3 recommends sending control data such as Host first, so
@@ -11119,8 +11084,6 @@ ClientImpl::StreamHandle ClientImpl::open_stream_(Request &req) {
     return handle;
   }
 
-<<<<<<< HEAD
-=======
   // Same framing check as ClientImpl::process_request(). A HEAD or bodyless
   // (204/304) response legitimately carries framing headers with no body.
   if (req.method != "HEAD" &&
@@ -11132,7 +11095,6 @@ ClientImpl::StreamHandle ClientImpl::open_stream_(Request &req) {
     return handle;
   }
 
->>>>>>> ggml-org/master
   handle.body_reader_.stream = handle.stream_;
   handle.body_reader_.payload_max_length = payload_max_length_;
 
@@ -11748,40 +11710,7 @@ bool ClientImpl::write_request(Stream &strm, Request &req,
     }
   }
 
-<<<<<<< HEAD
-  if (!basic_auth_password_.empty() || !basic_auth_username_.empty()) {
-    if (!req.has_header("Authorization")) {
-      req.headers.insert(make_basic_authentication_header(
-          basic_auth_username_, basic_auth_password_, false));
-    }
-  }
-
-  if (!bearer_token_auth_token_.empty()) {
-    if (!req.has_header("Authorization")) {
-      req.headers.insert(make_bearer_token_authentication_header(
-          bearer_token_auth_token_, false));
-    }
-  }
-
-  // Proxy-Authorization is only sent when the proxy is actually used for
-  // this target — otherwise NO_PROXY-matched requests would leak proxy
-  // credentials directly to the destination server.
-  if (is_proxy_enabled_for_host(host_)) {
-    if (!proxy_basic_auth_username_.empty() &&
-        !proxy_basic_auth_password_.empty() &&
-        !req.has_header("Proxy-Authorization")) {
-      req.headers.insert(make_basic_authentication_header(
-          proxy_basic_auth_username_, proxy_basic_auth_password_, true));
-    }
-    if (!proxy_bearer_token_auth_token_.empty() &&
-        !req.has_header("Proxy-Authorization")) {
-      req.headers.insert(make_bearer_token_authentication_header(
-          proxy_bearer_token_auth_token_, true));
-    }
-  }
-=======
   add_credential_headers(req);
->>>>>>> ggml-org/master
 
   // Request line and headers
   {
@@ -12163,11 +12092,6 @@ bool ClientImpl::process_request(Stream &strm, Request &req,
   // Body
   if ((res.status != StatusCode::NoContent_204) && req.method != "HEAD" &&
       req.method != "CONNECT") {
-<<<<<<< HEAD
-    auto redirect = 300 < res.status && res.status < 400 &&
-                    res.status != StatusCode::NotModified_304 &&
-                    follow_location_;
-=======
     // Reject ambiguous framing (RFC 9112 §6.3). Unlike a request, a response
     // whose final transfer coding is not chunked is not ambiguous: its body
     // runs until the server closes the connection, so it is not rejected.
@@ -12185,7 +12109,6 @@ bool ClientImpl::process_request(Stream &strm, Request &req,
 
     auto redirect = follow_location_ && detail::is_redirect(res) &&
                     res.status != StatusCode::NotModified_304;
->>>>>>> ggml-org/master
 
     if (req.response_handler && !redirect) {
       if (!req.response_handler(res)) {
@@ -18569,10 +18492,6 @@ ReadResult WebSocket::read(std::string &msg) {
     std::string payload;
     bool fin;
 
-<<<<<<< HEAD
-    if (!impl::read_websocket_frame(strm_, opcode, payload, fin, is_server_,
-                                    CPPHTTPLIB_WEBSOCKET_MAX_PAYLOAD_LENGTH)) {
-=======
     impl::FrameRead r =
         impl::read_websocket_frame(strm_, opcode, payload, fin, is_server_,
                                    CPPHTTPLIB_WEBSOCKET_MAX_PAYLOAD_LENGTH);
@@ -18586,7 +18505,6 @@ ReadResult WebSocket::read(std::string &msg) {
       return Timeout;
     }
     if (r != impl::FrameRead::Ok) {
->>>>>>> ggml-org/master
       closed_ = true;
       return Fail;
     }
@@ -18603,11 +18521,6 @@ ReadResult WebSocket::read(std::string &msg) {
           Opcode cont_opcode;
           std::string cont_payload;
           bool cont_fin;
-<<<<<<< HEAD
-          if (!impl::read_websocket_frame(
-                  strm_, cont_opcode, cont_payload, cont_fin, is_server_,
-                  CPPHTTPLIB_WEBSOCKET_MAX_PAYLOAD_LENGTH)) {
-=======
           // Only what is left of the limit, but room for a control frame,
           // which may come between the fragments.
           auto max_len =
@@ -18623,7 +18536,6 @@ ReadResult WebSocket::read(std::string &msg) {
           if (impl::read_websocket_frame(strm_, cont_opcode, cont_payload,
                                          cont_fin, is_server_,
                                          max_len) != impl::FrameRead::Ok) {
->>>>>>> ggml-org/master
             closed_ = true;
             return Fail;
           }
@@ -18707,7 +18619,8 @@ void WebSocket::close(CloseStatus status, const std::string &reason) {
   Opcode op;
   std::string resp;
   bool fin;
-  while (impl::read_websocket_frame(strm_, op, resp, fin, is_server_, 125)) {
+  while (impl::read_websocket_frame(strm_, op, resp, fin, is_server_, 125) ==
+         impl::FrameRead::Ok) {
     if (op == Opcode::Close) { break; }
   }
 }
@@ -18758,6 +18671,15 @@ void WebSocket::start_heartbeat() {
 const Request &WebSocket::request() const { return req_; }
 
 bool WebSocket::is_open() const { return !closed_; }
+
+void WebSocket::set_read_timeout(time_t sec, time_t usec) {
+  // 0 waits forever here, as it does for SO_RCVTIMEO. The stream waits with
+  // poll(), where 0 would instead mean "return immediately", so hand it the
+  // negative poll uses for an unbounded wait.
+  if (sec == 0 && usec == 0) { sec = -1; }
+  strm_.set_read_timeout(sec, usec);
+  read_timeout_set_ = true;
+}
 
 // WebSocketClient implementation
 WebSocketClient::WebSocketClient(
@@ -18874,15 +18796,12 @@ std::pair<time_t, time_t> WebSocketClient::handshake_timeout() const {
 bool WebSocketClient::create_stream(std::unique_ptr<Stream> &strm,
                                            Error &error, int &ssl_error,
                                            uint64_t &ssl_backend_error) {
-<<<<<<< HEAD
-=======
   // A read timeout of 0 means "wait forever", the way SO_RCVTIMEO reads it.
   // The streams wait with poll(), where 0 instead means "return immediately",
   // so they are given the negative poll uses for an unbounded wait.
   auto unbounded = read_timeout_sec_ == 0 && read_timeout_usec_ == 0;
   time_t strm_read_sec = unbounded ? -1 : read_timeout_sec_;
   time_t strm_read_usec = unbounded ? 0 : read_timeout_usec_;
->>>>>>> ggml-org/master
 #ifdef CPPHTTPLIB_SSL_ENABLED
   if (is_ssl_) {
     // A plain flag rather than SSLClient::load_certs()'s call_once: connect()
@@ -18904,11 +18823,7 @@ bool WebSocketClient::create_stream(std::unique_ptr<Stream> &strm,
     detail::ClientTlsSessionError tls_error;
     if (!detail::setup_client_tls_session(host_, tls_ctx_, tls_session_, sock_,
                                           server_certificate_verification_,
-<<<<<<< HEAD
-                                          read_timeout_sec_, read_timeout_usec_,
-=======
                                           timeout.first, timeout.second,
->>>>>>> ggml-org/master
                                           &tls_error, options)) {
       error = tls_error.error;
       ssl_error = tls_error.ssl_error;
@@ -18917,8 +18832,8 @@ bool WebSocketClient::create_stream(std::unique_ptr<Stream> &strm,
     }
 
     strm = std::unique_ptr<Stream>(new detail::WebSocketSSLStream(
-        sock_, tls_session_, read_timeout_sec_, read_timeout_usec_,
-        write_timeout_sec_, write_timeout_usec_));
+        sock_, tls_session_, strm_read_sec, strm_read_usec, write_timeout_sec_,
+        write_timeout_usec_));
     return true;
   }
 #else
@@ -18927,7 +18842,7 @@ bool WebSocketClient::create_stream(std::unique_ptr<Stream> &strm,
   (void)ssl_backend_error;
 #endif
   strm = std::unique_ptr<Stream>(
-      new detail::SocketStream(sock_, read_timeout_sec_, read_timeout_usec_,
+      new detail::SocketStream(sock_, strm_read_sec, strm_read_usec,
                                write_timeout_sec_, write_timeout_usec_));
   return true;
 }
@@ -18993,6 +18908,9 @@ Result WebSocketClient::connect() {
   ws_ = std::unique_ptr<WebSocket>(new WebSocket(std::move(strm), req, false,
                                                  websocket_ping_interval_sec_,
                                                  websocket_max_missed_pongs_));
+  // The stream was created with the timeout already; tell the WebSocket
+  // whether it came from the caller, so read() knows to report it as Timeout.
+  ws_->read_timeout_set_ = read_timeout_set_;
   return Result{Error::Success, upgrade.status, std::move(upgrade.headers)};
 }
 
@@ -19025,6 +18943,10 @@ const std::string &WebSocketClient::subprotocol() const {
 void WebSocketClient::set_read_timeout(time_t sec, time_t usec) {
   read_timeout_sec_ = sec;
   read_timeout_usec_ = usec;
+  read_timeout_set_ = true;
+  // The members above only seed the next connect(); read() consults the
+  // stream, so an already-open connection has to be told directly.
+  if (ws_) { ws_->set_read_timeout(sec, usec); }
 }
 
 void WebSocketClient::set_write_timeout(time_t sec, time_t usec) {

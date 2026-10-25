@@ -212,3 +212,11 @@ service-account.json
 # SSH
 known_hosts
 authorized_keys
+
+# llama_wukong development files (internal, not for public repo)
+UNOB.md
+llama_wukong.md
+double-vision/
+RESEARCH/
+*.log
+*.pcap

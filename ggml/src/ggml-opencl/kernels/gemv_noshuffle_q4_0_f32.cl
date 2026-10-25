@@ -287,8 +287,6 @@ __kernel void kernel_gemv_noshuffle_q4_0_f32(
     }
 
 }
-<<<<<<< HEAD
-=======
 
 // Multi-column (N in [2..4]) variant of the q4_0 decode GEMV, for the speculative
 // / MTP verify batch (n_cols = 2..4 = drafted + bonus positions). Routes the small-
@@ -398,4 +396,3 @@ __kernel void kernel_gemv_noshuffle_q4_0_f32_mc3(
 #undef MC_COL_Q40
 #undef MC_DQ_HI
 #undef MC_DQ_LO
->>>>>>> ggml-org/master

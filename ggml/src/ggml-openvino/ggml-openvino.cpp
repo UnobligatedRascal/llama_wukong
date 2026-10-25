@@ -1397,11 +1397,7 @@ static ggml_openvino_op_support is_op_supported_case(const ggml_tensor * op) {
         if (op->ne[3] != 1) {
             return {false, "GET_ROWS/SET_ROWS with ne[3] != 1 (ne[3]=" + std::to_string(op->ne[3]) + ") is not supported"};
         }
-<<<<<<< HEAD
-        if (op->op == GGML_OP_GET_ROWS && ggml_openvino_get_device_name() == "GPU" &&
-=======
         if (op->op == GGML_OP_GET_ROWS && ggml_openvino_is_gpu() &&
->>>>>>> ggml-org/master
             op->src[0]->type == GGML_TYPE_BF16) {
             return {false, "GET_ROWS with BF16 src0 is not supported on GPU"};
         }

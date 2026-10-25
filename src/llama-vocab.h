@@ -65,8 +65,6 @@ enum llama_vocab_pre_type {
     LLAMA_VOCAB_PRE_TYPE_GRANITE_EMB_MULTI = 54,
     LLAMA_VOCAB_PRE_TYPE_MELLUM2           = 55,
     LLAMA_VOCAB_PRE_TYPE_LAGUNA            = 56,
-<<<<<<< HEAD
-=======
     LLAMA_VOCAB_PRE_TYPE_HY_V4             = 57,
     LLAMA_VOCAB_PRE_TYPE_SPARK2_5          = 58,
     LLAMA_VOCAB_PRE_TYPE_UFAKZEKA          = 59,
@@ -83,7 +81,6 @@ enum llama_metaspace_prepend_scheme {
     LLAMA_METASPACE_PREPEND_SCHEME_NEVER  = 0,
     LLAMA_METASPACE_PREPEND_SCHEME_FIRST  = 1,
     LLAMA_METASPACE_PREPEND_SCHEME_ALWAYS = 2,
->>>>>>> ggml-org/master
 };
 
 struct LLM_KV;

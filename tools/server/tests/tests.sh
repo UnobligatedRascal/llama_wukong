@@ -6,17 +6,6 @@ cd $SCRIPT_DIR
 
 set -eu
 
-<<<<<<< HEAD
-if [ $# -lt 1 ]
-then
-    if [[ "${SLOW_TESTS:-0}" == 1 ]]; then
-        pytest --durations=30 -v -x
-    else
-        pytest --durations=30 -v -x -m "not slow"
-    fi
-else
-    pytest --durations=30 "$@"
-=======
 WORKERS="${PYTEST_WORKERS:-4}"
 
 if [ "${WORKERS}" -eq 1 ]; then
@@ -34,5 +23,4 @@ then
     fi
 else
     pytest --durations=30 ${WORKER_FLAGS} "$@"
->>>>>>> ggml-org/master
 fi

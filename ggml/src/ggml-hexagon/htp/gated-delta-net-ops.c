@@ -4,14 +4,6 @@
 #include <math.h>
 #include <HAP_farf.h>
 
-<<<<<<< HEAD
-#include "hvx-utils.h"
-#include "hex-fastdiv.h"
-
-#define GGML_COMMON_DECL_C
-#include "ggml-common.h"
-#include "htp-ctx.h"
-=======
 #include "hvx-base.h"
 #include "hvx-copy.h"
 #include "hvx-reduce.h"
@@ -25,7 +17,6 @@
 #include "hmx-fa-kernels.h"
 #include "hmx-queue.h"
 #include "gated-delta-net-ops.h"
->>>>>>> ggml-org/master
 
 #ifndef MIN
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
@@ -36,12 +27,8 @@ struct htp_gdn_context {
     const struct htp_gdn_kernel_params * kparams;
     struct htp_gdn_vtcm_layout layout;
     uint8_t * vtcm_base;
-<<<<<<< HEAD
-    size_t   vtcm_per_thread;
-=======
     uint32_t row_start;
     uint32_t nrows;
->>>>>>> ggml-org/master
 };
 
 static inline HVX_Vector gdn_mul_dot_f32(float * restrict dst, const HVX_Vector * restrict mul, const HVX_Vector * restrict dot, uint32_t n) {
@@ -774,16 +761,6 @@ static void gated_delta_net_f32_pp_thread(unsigned int nth, unsigned int ith, vo
     const struct htp_tensor * state = octx->src[5];
     const struct htp_tensor * dst   = octx->dst;
 
-<<<<<<< HEAD
-    const uint32_t S_v      = v->ne[0];
-    const uint32_t H        = v->ne[1];
-    const uint32_t n_tokens = v->ne[2];
-    const uint32_t n_seqs   = v->ne[3];
-    const uint32_t K        = octx->op_params[0];
-
-    const uint32_t total_rows = H * n_seqs;
-    if (ith >= total_rows) {
-=======
     const uint32_t S_v      = kparams->S_v;
     const uint32_t H        = kparams->H;
     const uint32_t n_tokens = kparams->n_tokens;
@@ -792,7 +769,6 @@ static void gated_delta_net_f32_pp_thread(unsigned int nth, unsigned int ith, vo
     const uint32_t row_end  = gctx->row_start + gctx->nrows;
 
     if (ith >= gctx->nrows) {
->>>>>>> ggml-org/master
         return;
     }
 
@@ -817,24 +793,15 @@ static void gated_delta_net_f32_pp_thread(unsigned int nth, unsigned int ith, vo
     const uint64_t state_size_per_snap = (uint64_t) kparams->state_size_per_snap;
     const dma_addr_t state_out_dma_base = dst_cache ? dst_cache->data : (dst->data + S_v * H * n_tokens * n_seqs * sizeof(float));
 
-    uint32_t ir_prefetch = ith;
+    uint32_t ir_prefetch = gctx->row_start + ith;
     int spad_idx = 0;
 
     // Prefetch preamble (up to 2 steps)
-<<<<<<< HEAD
-    for (int k = 0; k < 2 && ir_prefetch < total_rows; k++) {
-        const uint32_t piv1 = fastmodulo(ir_prefetch, H, &fd_H);
-        const uint32_t piv3 = fastdiv(ir_prefetch, &fd_H);
-        const float * ps_in = state_in_base + (uint64_t) piv3 * state_seq_stride + (uint64_t) piv1 * S_v * S_v;
-        // final state lands in snapshot slot 0 (most-recent-first ordering)
-        float * ps_out = state_out_base + ((uint64_t) piv3 * H + piv1) * S_v * S_v;
-=======
     for (int step = 0; step < 2 && ir_prefetch < row_end; step++) {
         const uint32_t piv1 = fastmodulo(ir_prefetch, H, fd_H);
         const uint32_t piv3 = fastdiv(ir_prefetch, fd_H);
         dma_addr_t ps_in  = state->data + ((uint64_t) piv3 * state_seq_stride + (uint64_t) piv1 * S_v * S_v) * sizeof(float);
         dma_addr_t ps_out = state_out_dma_base + ((uint64_t) piv3 * H + piv1) * S_v * S_v * sizeof(float);
->>>>>>> ggml-org/master
 
         // Push dummy write-back
         dma_queue_push(dma_q, dma_make_data(ps_out, s_work[spad_idx]),
@@ -850,19 +817,12 @@ static void gated_delta_net_f32_pp_thread(unsigned int nth, unsigned int ith, vo
         spad_idx ^= 1;
     }
 
-<<<<<<< HEAD
-    int curr_spad_idx = 0;
-    for (uint32_t ir = ith; ir < total_rows; ir += nth) {
-        dma_queue_pop(dma);
-        dma_queue_pop(dma);
-=======
     struct htp_thread_trace * tr = &octx->ctx->trace[ith];
 
     int curr_spad_idx = 0;
     for (uint32_t ir = gctx->row_start + ith; ir < row_end; ir += nth) {
         dma_queue_pop(dma_q);
         dma_queue_pop(dma_q);
->>>>>>> ggml-org/master
 
         float * s_work_curr = s_work[curr_spad_idx];
 
@@ -914,17 +874,10 @@ static void gated_delta_net_f32_pp_thread(unsigned int nth, unsigned int ith, vo
                        S_v * sizeof(float), S_v);
 
         // Prefetch next block (if any)
-<<<<<<< HEAD
-        if (ir_prefetch < total_rows) {
-            const uint32_t piv1 = fastmodulo(ir_prefetch, H, &fd_H);
-            const uint32_t piv3 = fastdiv(ir_prefetch, &fd_H);
-            const float * ps_in = state_in_base + (uint64_t) piv3 * state_seq_stride + (uint64_t) piv1 * S_v * S_v;
-=======
         if (ir_prefetch < row_end) {
             const uint32_t piv1 = fastmodulo(ir_prefetch, H, fd_H);
             const uint32_t piv3 = fastdiv(ir_prefetch, fd_H);
             dma_addr_t ps_in = state->data + ((uint64_t) piv3 * state_seq_stride + (uint64_t) piv1 * S_v * S_v) * sizeof(float);
->>>>>>> ggml-org/master
 
             dma_queue_push(dma_q, dma_make_data(s_work[spad_idx], ps_in),
                            S_v * sizeof(float), S_v * sizeof(float),
@@ -936,11 +889,7 @@ static void gated_delta_net_f32_pp_thread(unsigned int nth, unsigned int ith, vo
 
         curr_spad_idx ^= 1;
     }
-<<<<<<< HEAD
-    dma_queue_flush(dma);
-=======
     dma_queue_flush(dma_q);
->>>>>>> ggml-org/master
 }
 
 static void gated_delta_net_f32_tg_thread(unsigned int nth, unsigned int ith, void * data) {
@@ -956,21 +905,12 @@ static void gated_delta_net_f32_tg_thread(unsigned int nth, unsigned int ith, vo
     const struct htp_tensor * state = octx->src[5];
     const struct htp_tensor * dst   = octx->dst;
 
-<<<<<<< HEAD
-    const uint32_t S_v      = v->ne[0];
-    const uint32_t H        = v->ne[1];
-    const uint32_t n_seqs   = v->ne[3];
-
-    const uint32_t total_rows = H * n_seqs;
-    if (ith >= total_rows) {
-=======
     const uint32_t S_v      = kparams->S_v;
     const uint32_t H        = kparams->H;
     const uint32_t n_seqs   = kparams->n_seqs;
     const uint32_t row_end  = gctx->row_start + gctx->nrows;
 
     if (ith >= gctx->nrows) {
->>>>>>> ggml-org/master
         return;
     }
 
@@ -993,24 +933,15 @@ static void gated_delta_net_f32_tg_thread(unsigned int nth, unsigned int ith, vo
     const uint32_t state_seq_stride = kparams->state_seq_stride;
     const dma_addr_t state_out_dma_base = dst_cache ? dst_cache->data : (dst->data + S_v * H * n_seqs * sizeof(float));
 
-    uint32_t ir_prefetch = ith;
+    uint32_t ir_prefetch = gctx->row_start + ith;
     int spad_idx = 0;
 
     // Prefetch preamble (up to 2 steps)
-<<<<<<< HEAD
-    for (int k = 0; k < 2 && ir_prefetch < total_rows; k++) {
-        const uint32_t piv1 = fastmodulo(ir_prefetch, H, &fd_H);
-        const uint32_t piv3 = fastdiv(ir_prefetch, &fd_H);
-        const float * ps_in = state_in_base + (uint64_t) piv3 * state_seq_stride + (uint64_t) piv1 * S_v * S_v;
-        // final state lands in snapshot slot 0 (most-recent-first ordering)
-        float * ps_out = state_out_base + ((uint64_t) piv3 * H + piv1) * S_v * S_v;
-=======
     for (int step = 0; step < 2 && ir_prefetch < row_end; step++) {
         const uint32_t piv1 = fastmodulo(ir_prefetch, H, fd_H);
         const uint32_t piv3 = fastdiv(ir_prefetch, fd_H);
         dma_addr_t ps_in  = state->data + ((uint64_t) piv3 * state_seq_stride + (uint64_t) piv1 * S_v * S_v) * sizeof(float);
         dma_addr_t ps_out = state_out_dma_base + ((uint64_t) piv3 * H + piv1) * S_v * S_v * sizeof(float);
->>>>>>> ggml-org/master
 
         // Push dummy write-back
         dma_queue_push(dma_q, dma_make_data(ps_out, s_work[spad_idx]),
@@ -1026,19 +957,12 @@ static void gated_delta_net_f32_tg_thread(unsigned int nth, unsigned int ith, vo
         spad_idx ^= 1;
     }
 
-<<<<<<< HEAD
-    int curr_spad_idx = 0;
-    for (uint32_t ir = ith; ir < total_rows; ir += nth) {
-        dma_queue_pop(dma);
-        dma_queue_pop(dma);
-=======
     struct htp_thread_trace * tr = &octx->ctx->trace[ith];
 
     int curr_spad_idx = 0;
     for (uint32_t ir = gctx->row_start + ith; ir < row_end; ir += nth) {
         dma_queue_pop(dma_q);
         dma_queue_pop(dma_q);
->>>>>>> ggml-org/master
 
         float * s_work_curr = s_work[curr_spad_idx];
 
@@ -1078,17 +1002,10 @@ static void gated_delta_net_f32_tg_thread(unsigned int nth, unsigned int ith, vo
                        S_v * sizeof(float), S_v);
 
         // Prefetch next block (if any)
-<<<<<<< HEAD
-        if (ir_prefetch < total_rows) {
-            const uint32_t piv1 = fastmodulo(ir_prefetch, H, &fd_H);
-            const uint32_t piv3 = fastdiv(ir_prefetch, &fd_H);
-            const float * ps_in = state_in_base + (uint64_t) piv3 * state_seq_stride + (uint64_t) piv1 * S_v * S_v;
-=======
         if (ir_prefetch < row_end) {
             const uint32_t piv1 = fastmodulo(ir_prefetch, H, fd_H);
             const uint32_t piv3 = fastdiv(ir_prefetch, fd_H);
             dma_addr_t ps_in = state->data + ((uint64_t) piv3 * state_seq_stride + (uint64_t) piv1 * S_v * S_v) * sizeof(float);
->>>>>>> ggml-org/master
 
             dma_queue_push(dma_q, dma_make_data(s_work[spad_idx], ps_in),
                            S_v * sizeof(float), S_v * sizeof(float),
@@ -1100,9 +1017,6 @@ static void gated_delta_net_f32_tg_thread(unsigned int nth, unsigned int ith, vo
 
         curr_spad_idx ^= 1;
     }
-<<<<<<< HEAD
-    dma_queue_flush(dma);
-=======
     dma_queue_flush(dma_q);
 }
 
@@ -1500,7 +1414,6 @@ static __attribute__((noinline)) void gdn_build_inv_l_blocks(
         HVX_VectorPair vp_neg = Q6_W_vshuff_VVR(n1, n0, -2);
         p_neg_a11[r] = Q6_V_lo_W(vp_neg);
     }
->>>>>>> ggml-org/master
 }
 
 
@@ -2359,22 +2272,12 @@ static int gated_delta_net_f32_hmx_chunked(
 int op_gated_delta_net(struct htp_ops_context * octx) {
     const struct htp_tensor * dst = octx->dst;
 
-<<<<<<< HEAD
-    if (!q || !k || !v || !g || !beta || !state || !dst) {
-        return HTP_STATUS_INVAL_PARAMS;
-    }
-
-    if (q->type != HTP_TYPE_F32 || k->type != HTP_TYPE_F32 || v->type != HTP_TYPE_F32 ||
-        g->type != HTP_TYPE_F32 || beta->type != HTP_TYPE_F32 || state->type != HTP_TYPE_F32 ||
-        dst->type != HTP_TYPE_F32) {
-=======
     for (int i = 0; i < 6; i++) {
         if (htp_tensor_is_extended(octx->src[i])) {
             return HTP_STATUS_NO_SUPPORT;
         }
     }
     if (htp_tensor_is_extended(octx->dst)) {
->>>>>>> ggml-org/master
         return HTP_STATUS_NO_SUPPORT;
     }
     if (octx->dsts[1]) {
@@ -2389,12 +2292,6 @@ int op_gated_delta_net(struct htp_ops_context * octx) {
         return HTP_STATUS_INVAL_PARAMS;
     }
 
-<<<<<<< HEAD
-    struct htp_gdn_context gctx;
-    gctx.octx = octx;
-    gctx.rows_per_thread = (H * n_seqs + octx->n_threads - 1) / octx->n_threads;
-    gctx.state_bytes = (size_t) S_v * S_v * sizeof(float);
-=======
     const uint32_t S_v        = kparams->S_v;
     const uint32_t n_tokens   = kparams->n_tokens;
     const uint32_t total_rows = kparams->total_rows;
@@ -2433,19 +2330,10 @@ int op_gated_delta_net(struct htp_ops_context * octx) {
     gctx.kparams   = kparams;
     gctx.row_start = row_start;
     gctx.nrows     = nrows;
->>>>>>> ggml-org/master
 
     htp_gdn_vtcm_layout_build(&gctx.layout, S_v, n_threads);
     gctx.vtcm_base = VTCM_LAYOUT_PTR(uint8_t, octx->ctx->vtcm_base, gctx.layout.off_state);
 
-<<<<<<< HEAD
-    assert(octx->ctx->vtcm_base != NULL);
-    assert(octx->ctx->vtcm_size >= 2 * state_aligned * octx->n_threads);
-
-    gctx.vtcm_base = octx->ctx->vtcm_base;
-    gctx.vtcm_per_thread = 2 * state_aligned;
-
-=======
     if (gctx.layout.total_bytes > octx->ctx->vtcm_size) {
         return HTP_STATUS_VTCM_TOO_SMALL;
     }
@@ -2459,11 +2347,10 @@ int op_gated_delta_net(struct htp_ops_context * octx) {
          dst->ne[0], dst->ne[1], dst->ne[2], dst->ne[3],
          gctx.layout.total_bytes, n_threads);
 
->>>>>>> ggml-org/master
     if (n_tokens == 1) {
-        worker_pool_run_func(octx->ctx->worker_pool, gated_delta_net_f32_tg_thread, &gctx, octx->n_threads);
+        work_queue_run(octx->ctx->work_queue, gated_delta_net_f32_tg_thread, &gctx, n_threads);
     } else {
-        worker_pool_run_func(octx->ctx->worker_pool, gated_delta_net_f32_pp_thread, &gctx, octx->n_threads);
+        work_queue_run(octx->ctx->work_queue, gated_delta_net_f32_pp_thread, &gctx, n_threads);
     }
 
     return HTP_STATUS_OK;

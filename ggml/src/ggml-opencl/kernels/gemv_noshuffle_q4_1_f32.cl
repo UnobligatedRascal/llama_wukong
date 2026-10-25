@@ -288,8 +288,6 @@ kernel void kernel_gemv_noshuffle_q4_1_f32(
     }
 
 }
-<<<<<<< HEAD
-=======
 
 // Multi-column (N in [2..4]) variant of the q4_1 decode GEMV (spec/MTP verify) =
 // q4_0 mc3 + the q4_1 per-block min (regM; dequant = q*scale + minv). n_cols=2..4;
@@ -390,4 +388,3 @@ kernel void kernel_gemv_noshuffle_q4_1_f32_mc3(
 #undef MC_COL_Q41
 #undef MC_DQ1_HI
 #undef MC_DQ1_LO
->>>>>>> ggml-org/master

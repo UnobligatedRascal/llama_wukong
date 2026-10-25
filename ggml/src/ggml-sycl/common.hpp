@@ -29,11 +29,7 @@
 #include "presets.hpp"
 #include "type.hpp"
 #include "sycl_hw.hpp"
-<<<<<<< HEAD
-#include "fattn-buffers.hpp"
-=======
 #include "memtrace.hpp"
->>>>>>> ggml-org/master
 
 namespace syclexp = sycl::ext::oneapi::experimental;
 
@@ -138,13 +134,10 @@ extern int g_ggml_sycl_enable_flash_attention;
 extern int g_ggml_sycl_dev2dev_memcpy;
 extern int g_ggml_sycl_fa_onednn;
 extern int g_ggml_sycl_fa_onednn_max_kv;
-<<<<<<< HEAD
-=======
 extern int g_ggml_sycl_enable_mkl_fa;
 extern int g_ggml_sycl_memtrace;
 extern int g_ggml_sycl_memtrace_step;
 extern int g_ggml_sycl_graph_eviction_timeout;
->>>>>>> ggml-org/master
 
 
 #define CHECK_TRY_ERROR(expr)                                            \
@@ -440,7 +433,8 @@ struct ggml_tensor_extra_gpu {
 };
 
 extern int g_ggml_sycl_use_level_zero_api;
-void * ggml_sycl_malloc_device(size_t size, sycl::queue &q);
+void * ggml_sycl_malloc_device(size_t size, sycl::queue &q,
+                               ggml_sycl_mem_type type = GGML_SYCL_MEM_DIRECT);
 void ggml_sycl_free_device(void *ptr, sycl::queue &q);
 
 void release_extra_gpu(ggml_tensor_extra_gpu * extra, std::vector<queue_ptr> streams={});

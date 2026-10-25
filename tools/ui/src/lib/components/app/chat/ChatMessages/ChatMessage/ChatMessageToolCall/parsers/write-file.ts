@@ -4,10 +4,6 @@
 // result blob. The path is display-only (title + highlight language),
 // so a call that has not streamed one still shows its content.
 
-<<<<<<< HEAD
-import { parseToolArgs } from './_shared';
-import { CODE_BLOCK, FILE_PATH_SEPARATOR_REGEX } from '$lib/constants';
-=======
 import {
 	extractToolArgPath,
 	extractToolArgString,
@@ -15,22 +11,10 @@ import {
 	parseToolArgs
 } from './_shared';
 import { CODE_BLOCK, TOOL_ARG_PATH_KEYS } from '$lib/constants';
->>>>>>> ggml-org/master
 import { BuiltInTool } from '$lib/enums';
-import type { AgenticSection } from '$lib/types';
+import type { AgenticSection, WriteFileMeta, WriteFileTitleMeta } from '$lib/types';
 import { getFileTypeByExtension, tryParseToolResultObject } from '$lib/utils';
 
-<<<<<<< HEAD
-export type WriteFileMeta = {
-	fileName: string;
-	filePath: string;
-	language: string;
-	content: string;
-	bytesWritten?: number;
-	resultMessage?: string;
-	errorMessage?: string;
-};
-=======
 // Plain text when the call carries no path, or one with no known extension.
 function languageForPath(filePath: string | undefined): string {
 	if (!filePath) return CODE_BLOCK.DEFAULT_LANGUAGE;
@@ -40,7 +24,6 @@ function languageForPath(filePath: string | undefined): string {
 		CODE_BLOCK.DEFAULT_LANGUAGE
 	);
 }
->>>>>>> ggml-org/master
 
 export function parseWriteFileMeta(section: AgenticSection): WriteFileMeta | null {
 	const args = parseToolArgs(BuiltInTool.SERVER_WRITE_FILE, section, { partial: true });
@@ -68,8 +51,6 @@ export function parseWriteFileMeta(section: AgenticSection): WriteFileMeta | nul
 		resultMessage
 	};
 }
-<<<<<<< HEAD
-=======
 
 /**
  * Title-tier meta for write_file blocks: everything the header and status
@@ -103,4 +84,3 @@ export function parseWriteFileTitleMeta(section: AgenticSection): WriteFileTitle
 		resultMessage
 	};
 }
->>>>>>> ggml-org/master
