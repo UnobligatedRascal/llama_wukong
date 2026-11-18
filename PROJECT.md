@@ -1,24 +1,23 @@
 # llama_wukong — Project Reference
 
 > llama.cpp fork optimized for NVIDIA Kepler sm_37 (8x Tesla K80). Base: llama_lazarus → ggml-org/llama.cpp.
-> UnobligatedRascal — Making old hardware sing.
 
 **Last updated:** 2026-09-12 (turbo2_0/turbo3_0 meta backend fix applied)
 
 ---
 
-## Hardware Target (NOUGHT)
+## Hardware Target
 
-- Dual Xeon E5-2697 v4 (36 cores each, 72 total), 128GB DDR4 ECC
-- 8x Tesla K80 GK210 sm_37 (11GB each): NUMA0=GPU0-3, NUMA1=GPU4-7 (PIX-linked pairs)
-- Driver 470.256.02, CUDA 11.8, PCIe Gen3 x16
-- OS: Debian Bookworm / Q4OS
+- Multi-socket Intel Xeon (64+ cores), 128GB+ DDR4 ECC
+- 8x Tesla K80 GK210 sm_37 (11GB each): NUMA-aware GPU distribution
+- CUDA 11.x, PCIe Gen3
+- OS: Debian Bookworm
 
 ---
 
 ## Current Status
 
-**Verified working:** Tensor-split across all 8 GK210 GPUs, -np 2–6, Qwen3.6-27B Q4_K_M at 256K context with speculative decoding.
+**Verified working:** Tensor-split across 8 GPUs, -np 2–6, Qwen3.6-27B Q4_K_M at 256K context with speculative decoding.
 
 **Build:** Clean, branch main, working tree clean.
 
@@ -92,16 +91,16 @@ W spec common_specu: backend offload failed for seq_id=0; using CPU sampler
 - **P1:** Async pipeline re-implementation (rolled back 2026-09-08, malloc corruption). See ASYNC_PIPELINE_ATTEMPTED_CHANGES.md for root cause analysis. Re-impl notes: no lazy init during load, fix unreachable enable(), test NUMA first, no cudaSetDevice in constructors.
 - **P2:** FlashAttention/SWA feasibility on sm_37
 - **P2:** cuBLAS vs MMQ benchmarking
-- **P2:** TurboQuant runtime verification (blocked: GPUs in production)
+- **P2:** TurboQuant runtime verification (blocked: GPUs in use)
 
 ---
 
 ## Build
 
-Run from project ROOT directory (NOT build directory). Canonical command also in double-vision/UNOB.md.
+Run from project ROOT directory (NOT build directory).
 
 ```bash
-cd /home/whistler/llama_wukong && cmake -B build \\
+cd llama_wukong && cmake -B build \\
   -DCMAKE_BUILD_TYPE=Release \
   -DGGML_CUDA=ON \
   -DGGML_SCHED_MAX_COPIES=1 \
@@ -138,12 +137,12 @@ NUMA replicate is built-in via `-DGGML_NUMA_REPLICATE` flags or runtime env:
 ## Run (Verified)
 
 ```bash
-sudo GGML_CUDA_P2P=1 -E nice -n -20 numactl --interleave=all \
+GGML_CUDA_P2P=1 numactl --interleave=all \
   ./build/bin/llama-server \
   -m /path/to/model.gguf -t 36 -c 262144 -ngl 99 \
-  --port 4269 --host 0.0.0.0 --api-key KEY \
+  --port 8080 --host 0.0.0.0 --api-key YOUR_API_KEY \
   --jinja --chat-template-file ./models/tuvak.jinja \
-  --load-mode none -np 3 \
+  --load-mode none -np 4 \
   --ctx-checkpoints 64 --checkpoint-min-step 4096 --cache-ram 65536 \
   --mmproj /path/to/mmproj.gguf --no-mmproj-offload --image-min-tokens 1024 \
   --batch-size 2048 --ubatch-size 512 \
@@ -216,5 +215,5 @@ Use: `--cache-type-k turbo4_0 --cache-type-v turbo4_0`
 
 ---
 
-*UnobligatedRascal — Making old hardware sing.*
+*llama_wukong project*
 

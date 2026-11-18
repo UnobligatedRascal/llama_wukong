@@ -1,6 +1,6 @@
 /*
  * ggml-cpu-numa-replicate.c
- * NUMA weight replication for llama_wukong (NOUGHT dual-socket Xeon)
+ * NUMA weight replication for llama_wukong (dual-socket NUMA systems)
  *
  * REVISED DESIGN: Post-allocation data replication with TLS-cached pointer swap.
  *

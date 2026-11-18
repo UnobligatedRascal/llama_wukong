@@ -22,14 +22,14 @@
 
 ## Hardware Target
 
-Optimized for NVIDIA Kepler sm_37 with dual-socket Intel Xeon:
+Optimized for NVIDIA Kepler sm_37 with multi-GPU deployments:
 
 | Component | Spec |
 |-----------|------|
-| CPU | Dual Intel Xeon E5-2697 v4 (72 cores total) |
+| CPU | Multi-socket Intel Xeon (64+ cores) |
 | GPU | 8× Tesla K80 GK210 (sm_37, 11GB each) |
-| RAM | 128GB DDR4 ECC |
-| CUDA | 11.8 + NCCL |
+| RAM | 128GB+ DDR4 ECC |
+| CUDA | 11.x + NCCL |
 
 Works on any sm_37+ NVIDIA hardware with appropriate adjustments.
 

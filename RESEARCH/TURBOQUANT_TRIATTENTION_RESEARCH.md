@@ -1,7 +1,7 @@
 # TurboQuant / TriAttention / FlashAttention Research Notes
 
 **Date:** 2026-09-08
-**Hardware target:** NOUGHT (8x Tesla K80, sm_37, 12GB VRAM each, GK210)
+**Hardware target:** target system (8x Tesla K80, sm_37, 12GB VRAM each, GK210)
 
 ## Repo Corrections
 
@@ -104,7 +104,7 @@ The standalone repo is HIP/ROCm-focused:
 - Search fork for `triattention_calibrate.py` equivalent
 - Server flag parsing for --triattention-budget, --triattention-stats, etc.
 
-## 3. FlashAttention / SlidingWindowAttention on NOUGHT
+## 3. FlashAttention / SlidingWindowAttention on target system
 
 ### Current state in llama_wukong
 
@@ -161,7 +161,7 @@ So FA is being compiled for sm_37. Need to **test** if it actually runs.
 
 **Recommendation:** Start with mask-based SWA (option 1), measure if it's fast enough.
 
-### Action items for FA on NOUGHT:
+### Action items for FA on target system:
 
 1. **Test current FA:** Build with -DGGML_CUDA_FA_ALL_QUANTS=ON and run attention-heavy model
 2. **If FA fails:** Check for fp16-only paths in fattn-tile.cuh

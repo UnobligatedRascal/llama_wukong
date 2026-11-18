@@ -16,7 +16,7 @@ TurboQuant achieves 3.8-6.4x KV cache compression via PolarQuant codec (norm ext
 | TheTom/llama-cpp-turboquant | Complete TurboQuant+ stack | Metal, CUDA, HIP, CPU | Production fork, ~300 commits ahead of upstream |
 | atomicmilkshake/llama-cpp-turboquant | Windows MSVC+CUDA + TriAttention | CUDA only | Pre-built binaries, SM75+ only |
 
-For NOUGHT (Kepler sm_37): TheTom's implementation is the integration target. Requires custom sm_37 WHT and dequant kernels. atomicmilkshake's SM75+ requirement excludes Kepler entirely.
+For target system (Kepler sm_37): TheTom's implementation is the integration target. Requires custom sm_37 WHT and dequant kernels. atomicmilkshake's SM75+ requirement excludes Kepler entirely.
 
 ---
 
@@ -244,7 +244,7 @@ Recommended: Phase 1.5 task (between 1.4 and 1.5 in current plan).
 
 ---
 
-## Configuration Matrix (For NOUGHT Testing)
+## Configuration Matrix (For target system Testing)
 
 | Model weights | Safe config | Aggressive | Why |
 |---------------|-------------|------------|-----|

@@ -1,7 +1,7 @@
 # TriAttention Implementation Review
 
 **Date:** 2026-09-08  
-**Project:** llama_wukong (NOUGHT hardware optimization)  
+**Project:** llama_wukong (target system hardware optimization)  
 **Author:** UnobligatedRascal  
 **Phase:** Pre-production review
 
@@ -39,7 +39,7 @@ All Phase 1 Task 3 items are now implemented:
 
 ### Strengths of Current Implementation
 
-1. **GPU-First Design**: Scoring runs entirely on GPU via triattention_gpu_* API. Only score arrays (one float per position) are transferred back. This is optimal for NOUGHT's 8x K80.
+1. **GPU-First Design**: Scoring runs entirely on GPU via triattention_gpu_* API. Only score arrays (one float per position) are transferred back. This is optimal for target system's 8x K80.
 
 2. **TurboQuant Integration**: GPU kernel handles turbo2_0, turbo3_0, turbo4_0 dequantization with WHT inverse rotation directly on device. No extra CPU round-trips.
 
@@ -62,18 +62,18 @@ state->unrot_buf    = new float[(size_t)kv_size * head_dim];  // 16MB
 state->score_buf    = new float[(size_t)cal->n_sampled * kv_size];  // ~1-4MB
 ```
 
-**Assessment**: Acceptable. For 32K context with head_dim=128, total is ~32-40MB. On NOUGHT with 128GB RAM, this is negligible.
+**Assessment**: Acceptable. For 32K context with head_dim=128, total is ~32-40MB. On target system with 128GB RAM, this is negligible.
 
 **If we wanted to optimize**: Could allocate dynamically based on actual decode candidates instead of full kv_size.
 
 #### 2. CPU Fallback Path (Acceptable)
 
 The CPU fallback involves GPU→CPU transfer via `ggml_backend_tensor_get()`. This is expensive but:
-- GPU path is primary and will succeed on NOUGHT
+- GPU path is primary and will succeed on target system
 - Pruning is infrequent (every divide_length tokens, default 128)
 - The cost is amortized over many decode steps
 
-**Assessment**: Acceptable for NOUGHT. Would be problematic on CPU-only systems but that's not our target.
+**Assessment**: Acceptable for target system. Would be problematic on CPU-only systems but that's not our target.
 
 #### 3. Multi-GPU Tensor-Split (Working Correctly)
 
@@ -83,7 +83,7 @@ The implementation handles tensor-split correctly:
 - Scoring runs on the GPU where the K data resides
 - Results are copied to host and aggregated
 
-**Assessment**: Correct for NOUGHT's tensor-split configuration.
+**Assessment**: Correct for target system's tensor-split configuration.
 
 #### 4. GPU Kernel Optimization Opportunities
 
@@ -155,7 +155,7 @@ Before production use, test:
 
 ## Conclusion
 
-The TriAttention implementation is **production-ready** for NOUGHT hardware.
+The TriAttention implementation is **production-ready** for target system hardware.
 
 Key design decisions that make it suitable:
 - GPU-first with graceful CPU fallback

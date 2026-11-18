@@ -78,7 +78,7 @@ WUKONG_COMMITS=(
     "127ef2ee3"    # feat: TurboQuant + TriAttention sm_37 integration (Task 2.1 complete)
     "e8538a0f9"    # feat: TurboQuant backend integration complete (Task 2.2)
     "52c801fb9"    # security: purge credentials from repo history and redact all sensitive values
-    "329510125"    # docs: update project vision to reflect NOUGHT hardware optimization focus
+    "329510125"    # docs: update project vision to reflect target system hardware optimization focus
     "1c5237a95"    # docs: update project documentation to reflect current integration status
     "a63281cd6"    # feat: complete TriAttention implementation (Task 3)
     "f0a44002a"    # fix(sm_37): use __device__ instead of __constant__ memory for RoPE LUT

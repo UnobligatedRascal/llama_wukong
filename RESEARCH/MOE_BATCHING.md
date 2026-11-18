@@ -81,7 +81,7 @@ __global__ void expert_batch_kernel(
 - Sequential memory access: weight streaming vs random jumps
 - For 512 experts: potential 2-5x bandwidth improvement in MoE layers
 
-## NOUGHT-Specific Notes
+## target system-Specific Notes
 
 - Kepler L2: 1.5MB chip-wide, 48KB shared memory per SM
 - Expert size: 640 channels * 640 (hidden) * 4 bytes = ~1.6MB per expert (FP32)

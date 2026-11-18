@@ -6,9 +6,7 @@ Priority order based on ROI and complexity.
 
 ### 1.1 Topology Detection
 - [x] Add runtime NUMA node detection (libnuma or /sys topology)
-- [x] Map CPU cores to NUMA nodes:
-  - Node 0: cores 0-17, 36-53 (36 threads)
-  - Node 1: cores 18-35, 54-71 (36 threads)
+- [x] Map CPU cores to NUMA nodes based on system topology
 - [x] Expose via GGML_NUMA_REPLICATE compile flag
 
 ### 1.2 Weight Replication
@@ -19,7 +17,7 @@ Priority order based on ROI and complexity.
 ### 1.3 Thread Pinning
 - [x] Bind threads to NUMA-local cores at startup
 - [x] Use pthread_setaffinity_np or sched_setaffinity
-- [x] Thread pool split: 18 threads per node (physical cores, no HT)
+- [x] Thread pool split per NUMA node (physical cores, no HT)
 
 ### 1.4 Per-Thread Pointer Swap
 - [x] In ggml_compute_forward_mul_mat: swap src->data pointer based on thread's NUMA node
@@ -141,22 +139,17 @@ cmake .. \
   -DCMAKE_BUILD_TYPE=Release \
   -DGGML_CUDA=ON \
   -DGGML_CUDA_F16=ON \
-  -DCMAKE_CUDA_HOST_COMPILER=g++-11 \
-  -DCMAKE_CUDA_COMPILER=/usr/local/cuda-11.8/bin/nvcc \
   -DGGML_CUDA_NCCL=ON \
   -DCMAKE_CUDA_ARCHITECTURES="37" \
   -DLLAMA_CURL=OFF \
   -DGGML_CUDA_FA_ALL_QUANTS=ON \
   -DGGML_CUDA_FORCE_MMQ=ON \
   -DGGML_CUDA_GRAPHS=OFF \
-  -DCMAKE_C_COMPILER=gcc-11 \
-  -DCMAKE_CXX_COMPILER=g++-11 \
   -DGGML_CUDA_CUBLAS=ON \
   -DCMAKE_C_FLAGS="-DGGML_NUMA_REPLICATE" \
-  -DCMAKE_CXX_FLAGS="-DGGML_NUMA_REPLICATE" \
-  -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-rpath,/usr/local/cuda-11.8/targets/x86_64-linux/lib"
+  -DCMAKE_CXX_FLAGS="-DGGML_NUMA_REPLICATE"
 
-make -j36 llama-server llama-bench
+make -j$(nproc) llama-server llama-bench
 ```
 
 ## Task 7: TurboQuant KV Cache Compression (P1.5, 2-3 weeks)
@@ -262,14 +255,14 @@ make -j36 llama-server llama-bench
 4. Implement PolarQuant on top of existing WHT infrastructure
 5. Test asymmetric first (q8_0-K + turbo-V) — proven safe across hardware
 
-## Expected ROI for NOUGHT
+## Expected ROI
 
 - Qwen3.8-Flash-Next: 75% GDN layers (no KV), 25% QSA layers (KV cache)
 - TurboQuant compresses only the QSA KV cache (~16 of 64 layers)
 - At 128K context: ~5x KV cache reduction on those layers
 - Combined with GDN's constant memory: enables longer contexts than fp16 KV
 - Sparse V dequant: decode speedup regardless of compression level
-- Memory savings feed into Phase 2: more VRAM for MoE weight streaming
+- Memory savings enable longer contexts and larger models
 
 ## Build Scripts
 
@@ -283,32 +276,24 @@ cmake .. \
   -DCMAKE_BUILD_TYPE=Release \
   -DGGML_CUDA=ON \
   -DGGML_CUDA_F16=ON \
-  -DCMAKE_CUDA_HOST_COMPILER=g++-11 \
-  -DCMAKE_CUDA_COMPILER=/usr/local/cuda-11.8/bin/nvcc \
   -DGGML_CUDA_NCCL=ON \
   -DCMAKE_CUDA_ARCHITECTURES="37" \
   -DLLAMA_CURL=OFF \
   -DGGML_CUDA_FA_ALL_QUANTS=ON \
   -DGGML_CUDA_FORCE_MMQ=ON \
   -DGGML_CUDA_GRAPHS=OFF \
-  -DCMAKE_C_COMPILER=gcc-11 \
-  -DCMAKE_CXX_COMPILER=g++-11 \
   -DGGML_CUDA_CUBLAS=ON \
   -DCMAKE_C_FLAGS="-DGGML_NUMA_REPLICATE" \
-  -DCMAKE_CXX_FLAGS="-DGGML_NUMA_REPLICATE" \
-  -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-rpath,/usr/local/cuda-11.8/targets/x86_64-linux/lib"
+  -DCMAKE_CXX_FLAGS="-DGGML_NUMA_REPLICATE"
 
-make -j36 llama-server llama-bench
+make -j$(nproc) llama-server llama-bench
 ```
 
 ## Notes
 
-- DO NOT kill running llama-server (hosts this session)
 - Test all changes with scripts, not interactive sessions
 - Commit after each completed task
 - Profile before and after each optimization
-- See RESEARCH/TURBOQUANT.md for deep architectural reference
 
 ---
-UnobligatedRascal
 

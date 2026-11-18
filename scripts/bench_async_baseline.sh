@@ -1,14 +1,14 @@
 #!/bin/bash
 # Profile current baseline: compute/transfer patterns, NCCL sync, GPU utilization
 # Run BEFORE any async pipeline changes
-# Saves outputs to ${LLAMA_WUKONG_HOME}/benches/nought-baseline/
+# Saves outputs to ${LLAMA_WUKONG_HOME}/benches/target system-baseline/
 
 set -e
 
 # Use environment variables for paths - set LLAMA_WUKONG_HOME if needed
 LLAMA_WUKONG_HOME="${LLAMA_WUKONG_HOME:-${LLAMA_WUKONG_HOME}}"
 
-OUTDIR="${LLAMA_WUKONG_HOME}/benches/nought-baseline"
+OUTDIR="${LLAMA_WUKONG_HOME}/benches/target system-baseline"
 mkdir -p "$OUTDIR"
 echo "=== Baseline Profile ==="
 echo "Output: $OUTDIR"

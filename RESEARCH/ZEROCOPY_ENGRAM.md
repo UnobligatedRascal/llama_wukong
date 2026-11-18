@@ -73,7 +73,7 @@ Con:
 - Pinned memory reduces available system RAM for OS swapping
 - Must manage prefetching to avoid page fault storms
 
-## NOUGHT-Specific Notes
+## target system-Specific Notes
 
 - 128GB system RAM, model weights ~82GB at IQ3_XXS
 - Engram table adds ~25GB pinned -> total ~107GB, leaves 21GB headroom

@@ -32,11 +32,11 @@ test_cache_type() {
     echo "=========================================="
     
     # Start server in background
-    sudo GGML_CUDA_P2P=1 -E nice -n -20 numactl --interleave=all \
+    GGML_CUDA_P2P=1 numactl --interleave=all \
         $LLAMA_SERVER \
         -m "$MODEL" -t 36 -c 4096 -ngl 99 \
         --port $PORT --host 127.0.0.1 --api-key test \
-        --jinja --chat-template-file ${MODELS_HOME:-/home/whistler/models}/tuvak.jinja \
+        --jinja --chat-template-file ${MODELS_HOME:-./models}/tuvak.jinja \
         --load-mode none -np 4 \
         --batch-size 512 --ubatch-size 256 \
         --cache-type-k "$CACHE_K" --cache-type-v "$CACHE_V" \

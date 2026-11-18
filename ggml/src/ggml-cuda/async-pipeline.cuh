@@ -1,4 +1,4 @@
-// Async GPU Pipeline for 8x K80 on NOUGHT
+// Async GPU Pipeline for 8x K80
 // Implements compute/transfer overlap via per-GPU stream pairs
 // Exploits K80 PLX switch (PIX connection) for intra-card parallelism
 //
@@ -8,7 +8,7 @@
 //   - cudaEvent after each layer compute completion
 //   - Prefetch stream waits on event before starting transfer
 //
-// NOUGHT topology (nvidia-smi topo):
+// Target topology (nvidia-smi topo):
 //   NUMA0: GPU0-PIX-GPU1, GPU2-PIX-GPU3, PHB to each other
 //   NUMA1: GPU4-PIX-GPU5, GPU6-PIX-GPU7, PHB to each other
 //   Cross-NUMA: SYS (QPI/UPI) - expensive
@@ -161,7 +161,7 @@ struct ggml_cuda_async_pipeline {
         std::vector<int>& numa1_gpus) {
         numa0_gpus.clear();
         numa1_gpus.clear();
-        // Hardcoded for NOUGHT topology
+        // Hardcoded for 8x K80 topology
         // GPUs 0-3 on NUMA0, GPUs 4-7 on NUMA1
         for (int i = 0; i < 4; i++) numa0_gpus.push_back(i);
         for (int i = 4; i < 8; i++) numa1_gpus.push_back(i);

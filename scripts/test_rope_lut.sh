@@ -15,7 +15,7 @@ LLAMA_WUKONG_HOME="${LLAMA_WUKONG_HOME:-${LLAMA_WUKONG_HOME}}"uo pipefail
 
 PROJ="${LLAMA_WUKONG_HOME}"
 MODEL="/mnt/512gb_ssd/models/Qwen3.6-27B-Fable-Fus-711-UnHeretic-NM-DAU-NEO-MAX-NEO-MTP-Q4_K_M.gguf"
-TEMPLATE="${MODELS_HOME:-/home/whistler/models}/tuvak.jinja"
+TEMPLATE="${MODELS_HOME:-./models}/tuvak.jinja"
 API_KEY="YOUR_API_KEY_HERE"
 BUILD_DIR="$PROJ/build"
 LOG_DIR="$PROJ/test_logs/rope_lut_$(date +%Y%m%d_%H%M%S)"
@@ -276,9 +276,8 @@ start_server() {
     cleanup_ports "$port"
     
     # Start server
-    sudo GGML_NUMA_REPLICATE=0 GGML_CUDA_P2P=1 OMP_NUM_THREADS=$threads GOMP_CPU_AFFINITY="$affinity" \
+    GGML_NUMA_REPLICATE=0 GGML_CUDA_P2P=1 OMP_NUM_THREADS=$threads GOMP_CPU_AFFINITY="$affinity" \
         CUDA_VISIBLE_DEVICES="$cuda_devs" \
-        -E nice -n -20 \
         numactl --cpunodebind="$numa_node" --membind="$numa_node" \
         "$binary" \
         -m "$MODEL" \
@@ -723,13 +722,13 @@ PORT=$START_PORT
 TESTS_PASSED=0
 TESTS_FAILED=0
 
-# GPU Config 1: Node 0 only (GPUs 0-3, 18 threads)
+# GPU Config 1: First NUMA node (GPUs 0-3)
 for np in 1 2 3; do
     for lut in OFF ON; do
         local_binary=$([ "$lut" = "OFF" ] && echo "$BINARY_OFF" || echo "$BINARY_ON")
         local_name="node0_lut_${lut}_np${np}"
         
-        if run_test_config "$local_name" "$local_binary" "0,1,2,3" "0" "18" "0-17,36-53" "1,1,1,1" "$np" "$PORT"; then
+        if run_test_config "$local_name" "$local_binary" "0,1,2,3" "0" "18" "0-17" "1,1,1,1" "$np" "$PORT"; then
             TESTS_PASSED=$((TESTS_PASSED + 1))
         else
             TESTS_FAILED=$((TESTS_FAILED + 1))
@@ -738,13 +737,13 @@ for np in 1 2 3; do
     done
 done
 
-# GPU Config 2: Node 1 only (GPUs 4-7, 18 threads)
+# GPU Config 2: Second NUMA node (GPUs 4-7)
 for np in 1 2 3; do
     for lut in OFF ON; do
         local_binary=$([ "$lut" = "OFF" ] && echo "$BINARY_OFF" || echo "$BINARY_ON")
         local_name="node1_lut_${lut}_np${np}"
         
-        if run_test_config "$local_name" "$local_binary" "4,5,6,7" "1" "18" "18-35,54-71" "1,1,1,1" "$np" "$PORT"; then
+        if run_test_config "$local_name" "$local_binary" "4,5,6,7" "1" "18" "18-35" "1,1,1,1" "$np" "$PORT"; then
             TESTS_PASSED=$((TESTS_PASSED + 1))
         else
             TESTS_FAILED=$((TESTS_FAILED + 1))
@@ -753,13 +752,13 @@ for np in 1 2 3; do
     done
 done
 
-# GPU Config 3: All 8 GPUs (36 threads)
+# GPU Config 3: All 8 GPUs
 for np in 1 2 3; do
     for lut in OFF ON; do
         local_binary=$([ "$lut" = "OFF" ] && echo "$BINARY_OFF" || echo "$BINARY_ON")
         local_name="all8_lut_${lut}_np${np}"
         
-        if run_test_config "$local_name" "$local_binary" "0,1,2,3,4,5,6,7" "0" "36" "0-17,36-53,18-35,54-71" "1,1,1,1,1,1,1,1" "$np" "$PORT"; then
+        if run_test_config "$local_name" "$local_binary" "0,1,2,3,4,5,6,7" "0" "36" "0-35" "1,1,1,1,1,1,1,1" "$np" "$PORT"; then
             TESTS_PASSED=$((TESTS_PASSED + 1))
         else
             TESTS_FAILED=$((TESTS_FAILED + 1))

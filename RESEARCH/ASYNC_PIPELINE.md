@@ -80,7 +80,7 @@ cudaMemcpyAsync requires pinned (page-locked) host memory:
 - NVIDIA CUDA Programming Guide: Section 2.5 Asynchronous Execution
 - NVIDIA CUDA Programming Guide: Section 3.4 Multi-GPU Systems
 
-## NOUGHT-Specific Notes
+## target system-Specific Notes
 
 - 8 independent GPUs, no NVLink, PCIe Gen3 topology
 - GGML_CUDA_P2P=1 enables peer access where available (within K80 cards)

@@ -1,9 +1,9 @@
-// NUMA-Aware GPU Thread Binding for NOUGHT
+// NUMA-Aware GPU Thread Binding for dual-socket 8x K80
 // Pins compute threads to NUMA-local cores matching their GPU assignment
 //
-// NOUGHT topology:
-//   NUMA0: CPU cores 0-17,36-53 | GPUs 0,1,2,3
-//   NUMA1: CPU cores 18-35,54-71 | GPUs 4,5,6,7
+// Target topology (adjust as needed):
+//   NUMA0: CPUs 0-35 | GPUs 0,1,2,3
+//   NUMA1: CPUs 36-71 | GPUs 4,5,6,7
 //
 // Strategy:
 //   - GPU compute threads for GPUs 0-3 bound to NUMA0 cores
@@ -21,7 +21,7 @@
 #include <cstring>
 #include <vector>
 
-// Get NUMA node for a given GPU (hardcoded for NOUGHT topology)
+// Get NUMA node for a given GPU (hardcoded for 8-GPU topology)
 inline int ggml_cuda_numa_get_node_for_gpu(int gpu_id) {
     if (gpu_id >= 0 && gpu_id <= 3) return 0;
     if (gpu_id >= 4 && gpu_id <= 7) return 1;

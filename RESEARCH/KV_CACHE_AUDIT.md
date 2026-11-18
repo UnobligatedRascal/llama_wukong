@@ -1,6 +1,6 @@
 # KV Cache Visualization & Audit Methodology
 
-**Purpose:** Diagnose why KV cache quantization (q4_0/q8_0/turbo*) shows no speedup vs f16 on NOUGHT with tensor-split.
+**Purpose:** Diagnose why KV cache quantization (q4_0/q8_0/turbo*) shows no speedup vs f16 on target system with tensor-split.
 
 **Hypothesis:** Either (a) quantization isn't being applied, (b) dequantization overhead masks bandwidth savings, or (c) tensor-split meta backend adds overhead that negates quantization benefits.
 

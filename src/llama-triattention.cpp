@@ -1,7 +1,7 @@
 // TriAttention: Trigonometric KV Cache Eviction for llama_wukong
 // Based on arXiv 2604.04921 (MIT/NVIDIA/ZJU)
 //
-// Implementation adapted for NOUGHT hardware (8x K80, sm_37) with GPU-accelerated
+// Implementation adapted for Kepler sm_37 system hardware (8x K80, sm_37) with GPU-accelerated
 // scoring. UnobligatedRascal
 //
 // This file implements the complete TriAttention scoring and pruning pipeline:
@@ -500,7 +500,7 @@ static void triattention_dequant_kv_head(
         // For turbo2/turbo3: GPU kernel handles WHT inverse internally.
         // CPU path: we skip WHT inverse here because the dequant functions
         // for turbo2/turbo3 return WHT-rotated values, but since this is
-        // primarily a GPU-accelerated path on NOUGHT, we accept the slight
+        // primarily a GPU-accelerated path on Kepler sm_37 system, we accept the slight
         // inaccuracy for CPU fallback. For full correctness, a CPU WHT
         // inverse would be needed.
         (void)need_wht_inv;

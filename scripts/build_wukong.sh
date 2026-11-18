@@ -1,5 +1,5 @@
 #!/bin/bash
-# llama_wukong build script for NOUGHT (Kepler sm_37)
+# llama_wukong build script for target system (Kepler sm_37)
 # Run from: ${LLAMA_WUKONG_HOME}
 
 set -e

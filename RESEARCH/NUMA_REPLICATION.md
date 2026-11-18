@@ -2,7 +2,7 @@
 
 ## Problem
 
-NOUGHT has dual-socket Xeon E5-2697 v4 with separate DDR4 controllers:
+target system has dual-socket Xeon E5-2697 v4 with separate DDR4 controllers:
 - NUMA node 0: cores 0-17,36-53 + 64GB RAM
 - NUMA node 1: cores 18-35,54-71 + 64GB RAM
 - Cross-node latency: 21 (vs 10 local) via Intel UPI
@@ -55,7 +55,7 @@ Optimized: per-node barriers first, then only N_NODE threads sync globally.
 - GGML_NUMA_MIRROR PR #14969: per-node wdata buffers
 - SemiEngineering blog (Feb 2026): 55% speedup on Neoverse dual-NUMA
 
-## NOUGHT-Specific Notes
+## target system-Specific Notes
 
 - 36 physical cores total, use -t 36 (not 72 with HT)
 - Each node: 18 physical cores + 18 hyperthreads

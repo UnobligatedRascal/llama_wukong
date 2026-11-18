@@ -12,7 +12,7 @@
 //   TriAttention evicts unimportant entries entirely (reducing token count)
 //   Combined: ~40x effective KV memory reduction
 //
-// llama_wukong variant: optimized for NOUGHT hardware (8x K80, sm_37)
+// llama_wukong variant: optimized for Kepler sm_37 system hardware (8x K80, sm_37)
 // with GPU-accelerated scoring via triattention_gpu_* API.
 // UnobligatedRascal
 

@@ -1,4 +1,4 @@
-// NCCL Staggered AllReduce for NOUGHT 8x K80
+// NCCL Staggered AllReduce for 8x K80 multi-GPU
 // Reduces QPI/UPI contention by grouping all-reduce ops by NUMA node
 //
 // Problem: 8-GPU all-reduce simultaneously causes QPI contention when
@@ -36,7 +36,7 @@ inline void ggml_cuda_nccl_init_env() {
         GGML_LOG_INFO("NCCL: set NCCL_P2P_LEVEL=1 (PCIe P2P only, no SYS crossing)\n");
     }
 
-    // Disable InfiniBand (not available on NOUGHT)
+    // Disable InfiniBand (K80 uses PCIe only)
     if (!getenv("NCCL_IB_DISABLE")) {
         setenv("NCCL_IB_DISABLE", "1", 0);
     }
